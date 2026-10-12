@@ -110,6 +110,7 @@
   }
   #overlay input:focus { border-color: #4fc3f7; }
   #audioHint { min-height: 1.5em; font-size: 13px !important; }
+  #overlay .version { font-size: 11px; opacity: .65; }
   .code {
     font: 800 28px/1 ui-monospace, Menlo, Consolas, monospace;
     letter-spacing: 6px; color: #9ee7ff;
@@ -196,13 +197,17 @@ import { joinRoom, getRelaySockets } from 'trystero';
    LOG DE REDE
    ============================================================ */
 let netlogEl = null;
+const netlogLines = [];
 function netlog(msg, cls = '') {
   const ts = new Date().toLocaleTimeString('pt-PT', { hour12: false });
   const line = `<span class="t">[${ts}]</span> ${cls ? `<span class="${cls}">` : ''}${msg}${cls ? '</span>' : ''}\n`;
   console.log('[net]', msg);
-  if (!netlogEl) return;
-  netlogEl.innerHTML += line;
-  netlogEl.scrollTop = netlogEl.scrollHeight;
+  netlogLines.push(line);
+  if (netlogLines.length > 80) netlogLines.shift();
+  if (netlogEl) {
+    netlogEl.innerHTML = netlogLines.join('');
+    netlogEl.scrollTop = netlogEl.scrollHeight;
+  }
 }
 
 /* ============================================================
@@ -489,6 +494,7 @@ function checkGoal() {
    REDE — Trystero 0.26.x
    ============================================================ */
 const APP_ID = 'bola-pvp-simples-v1';
+const APP_BUILD = '12.10.2026 · rede 0.26.0';
 const ROOM_CONFIG = {
   appId: APP_ID,
   trickleIce: true,
@@ -517,6 +523,7 @@ let stateInterval = null;
 let inputInterval = null;
 let relayWatchInterval = null;
 let joinTimeout = null;
+let lastJoinError = '';
 
 /* Código de sala por áudio: tom inicial + 5 símbolos base36 + verificação. */
 const AUDIO_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -787,6 +794,7 @@ function startRelayWatch() {
 function handleJoinError(details) {
   const err = details?.error;
   const msg = err?.message || String(err || 'erro desconhecido');
+  lastJoinError = msg;
   const peer = details?.peerId ? ` peer=${details.peerId}` : '';
   netlog(`falha WebRTC${peer}: ${msg}`, 'er');
   setStatus('falha de ligação WebRTC', 'err');
@@ -794,6 +802,7 @@ function handleJoinError(details) {
 
 function setupRoom(code, host) {
   cleanupRoom();
+  lastJoinError = '';
   isHost = host;
   roomCode = code;
 
@@ -898,9 +907,11 @@ function joinRoomWithCode(code) {
     joinTimeout = setTimeout(() => {
       if (!peerConnected) {
         const { total, open } = relaySummary();
-        const detail = open === 0
-          ? 'Não foi possível contactar os relays de matchmaking.'
-          : 'Os relays estão ligados, mas o host não foi encontrado. Confirma o código e que o host continua na sala.';
+        const detail = lastJoinError
+          ? 'O host foi encontrado, mas a ligação WebRTC falhou. Consulta o log abaixo.'
+          : open === 0
+            ? 'Não foi possível contactar os relays de matchmaking.'
+            : 'Os relays estão ligados, mas o host não foi encontrado. Confirma o código e que o host continua na sala.';
         netlog(`timeout: nenhum peer após 30s (relays ${open}/${total})`, 'er');
         showOverlayError(detail);
       }
@@ -929,6 +940,10 @@ const overlayContent = document.getElementById('overlayContent');
 
 function attachNetlog() {
   netlogEl = document.getElementById('netlog');
+  if (netlogEl) {
+    netlogEl.innerHTML = netlogLines.join('');
+    netlogEl.scrollTop = netlogEl.scrollHeight;
+  }
 }
 
 function showOverlayStart() {
@@ -954,6 +969,7 @@ function showOverlayMenu() {
       <button class="btn" id="btnCreate">Criar sala</button>
       <button class="btn alt" id="btnJoin">Entrar em sala</button>
     </div>
+    <p class="version">${APP_BUILD}</p>
     <div id="netlog"></div>
   `;
   attachNetlog();
@@ -974,6 +990,7 @@ function showOverlayJoinInput() {
       <button class="btn alt" id="btnBack">Voltar</button>
     </div>
     <p id="audioHint" role="status" aria-live="polite"></p>
+    <p class="version">${APP_BUILD}</p>
     <div id="netlog"></div>
   `;
   attachNetlog();
@@ -1003,6 +1020,7 @@ function showOverlayHostWaiting(code) {
       <div id="spinner"></div>
       <span style="color:#a8bcdc;font-size:14px">À espera de adversário…</span>
     </div>
+    <p class="version">${APP_BUILD}</p>
     <div id="netlog"></div>
   `;
   attachNetlog();
