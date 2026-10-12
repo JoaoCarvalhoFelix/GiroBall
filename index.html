@@ -282,6 +282,1389 @@ scene.background = new THREE.Color(0x0e1330);
 scene.fog = new THREE.Fog(0x0e1330, 48, 95);
 
 const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.5, 250);
+let cameraSide = -1;
+function updateCamera() {
+  camera.aspect = innerWidth / innerHeight;
+  const tanV = Math.tan((camera.fov * DEG) / 2);
+  const tanH = tanV * camera.aspect;
+  const D = clamp(8 / Math.max(tanH, 0.15), 28, 52);
+  camera.position.set(0, 0.65 * D, cameraSide * 0.758 * D);
+  camera.lookAt(0, 0, 0);
+  camera.updateProjectionMatrix();
+}
+updateCamera();
+
+scene.add(new THREE.HemisphereLight(0xbfd9ff, 0x16233a, 1.2));
+const sun = new THREE.DirectionalLight(0xffffff, 2.1);
+sun.position.set(10, 26, -14);
+sun.castShadow = true;
+sun.shadow.mapSize.set(1024, 1024);
+sun.shadow.camera.near = 1; sun.shadow.camera.far = 80;
+const S = 17;
+sun.shadow.camera.left = -S; sun.shadow.camera.right = S;
+sun.shadow.camera.top = S;   sun.shadow.camera.bottom = -S;
+sun.shadow.camera.updateProjectionMatrix();
+sun.shadow.bias = -0.0009;
+scene.add(sun, sun.target);
+
+const M = {
+  pitch: new THREE.MeshStandardMaterial({ color: 0x2fa96b, roughness: 0.95 }),
+  wall:  new THREE.MeshStandardMaterial({ color: 0xe8f0ff, roughness: 0.6, metalness: 0.05 }),
+  line:  new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5 }),
+  goalA: new THREE.MeshStandardMaterial({ color: 0x35d0ff, emissive: 0x0d5a7a, roughness: 0.35 }),
+  goalB: new THREE.MeshStandardMaterial({ color: 0xff4d6d, emissive: 0x7a0d22, roughness: 0.35 }),
+};
+
+const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -30, 0) });
+world.broadphase = new CANNON.SAPBroadphase(world);
+world.allowSleep = false;
+
+const matGround = new CANNON.Material('ground');
+const matWall   = new CANNON.Material('wall');
+const matBall   = new CANNON.Material('ball');
+world.addContactMaterial(new CANNON.ContactMaterial(matBall, matGround, { friction: 0.28, restitution: 0.40 }));
+world.addContactMaterial(new CANNON.ContactMaterial(matBall, matWall,   { friction: 0.05, restitution: 0.80 }));
+world.addContactMaterial(new CANNON.ContactMaterial(matBall, matBall,   { friction: 0.02, restitution: 0.95 }));
+
+function staticBox(cx, cy, cz, sx, sy, sz, threeMat, physMat) {
+  world.addBody(new CANNON.Body({
+    mass: 0,
+    shape: new CANNON.Box(new CANNON.Vec3(sx/2, sy/2, sz/2)),
+    position: new CANNON.Vec3(cx, cy, cz),
+    material: physMat,
+  }));
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), threeMat);
+  mesh.position.set(cx, cy, cz);
+  mesh.castShadow = mesh.receiveShadow = true;
+  scene.add(mesh);
+}
+staticBox(0, -0.5, 0, FIELD_W + 2*WALL_T + 3, 1, FIELD_L + 2*WALL_T + GOAL_D*2 + 3, M.pitch, matGround);
+staticBox(-(HW + WALL_T/2), WALL_H/2, 0, WALL_T, WALL_H, FIELD_L, M.wall, matWall);
+staticBox( (HW + WALL_T/2), WALL_H/2, 0, WALL_T, WALL_H, FIELD_L, M.wall, matWall);
+
+const segW  = (FIELD_W - GOAL_W) / 2;
+const segCx = GOAL_W/2 + segW/2;
+for (const s of [-1, 1]) {
+  const zEnd = s * (HL + WALL_T/2);
+  staticBox( segCx, WALL_H/2, zEnd, segW, WALL_H, WALL_T, M.wall, matWall);
+  staticBox(-segCx, WALL_H/2, zEnd, segW, WALL_H, WALL_T, M.wall, matWall);
+  staticBox( GOAL_W/2 + WALL_T/2, WALL_H/2, s*(HL + GOAL_D/2), WALL_T, WALL_H, GOAL_D, M.wall, matWall);
+  staticBox(-GOAL_W/2 - WALL_T/2, WALL_H/2, s*(HL + GOAL_D/2), WALL_T, WALL_H, GOAL_D, M.wall, matWall);
+  staticBox(0, WALL_H/2, s*(HL + GOAL_D + WALL_T/2), GOAL_W + 2*WALL_T, WALL_H, WALL_T, s < 0 ? M.goalA : M.goalB, matWall);
+}
+
+function flat(geo, mat, y = 0.02) {
+  const m = new THREE.Mesh(geo, mat);
+  m.rotation.x = -Math.PI/2;
+  m.position.y = y;
+  scene.add(m);
+}
+flat(new THREE.RingGeometry(2.35, 2.52, 64), M.line);
+flat(new THREE.PlaneGeometry(FIELD_W, 0.12), M.line);
+for (const s of [-1, 1]) {
+  const m = new THREE.Mesh(
+    new THREE.PlaneGeometry(GOAL_W, GOAL_D),
+    new THREE.MeshBasicMaterial({ color: s < 0 ? 0x35d0ff : 0xff4d6d, transparent: true, opacity: 0.32 })
+  );
+  m.rotation.x = -Math.PI/2;
+  m.position.set(0, 0.021, s * (HL + GOAL_D/2));
+  scene.add(m);
+}
+
+function makeBall(color, emissive, x, z) {
+  const body = new CANNON.Body({
+    mass: 1,
+    shape: new CANNON.Sphere(BALL_R),
+    position: new CANNON.Vec3(x, BALL_R, z),
+    material: matBall, linearDamping: 0, angularDamping: 0.22,
+  });
+  world.addBody(body);
+  const group = new THREE.Group();
+  const sphere = new THREE.Mesh(
+    new THREE.SphereGeometry(BALL_R, 32, 24),
+    new THREE.MeshStandardMaterial({ color, emissive, emissiveIntensity: 0.55, roughness: 0.32 })
+  );
+  sphere.castShadow = true;
+  group.add(sphere);
+  const band = new THREE.Mesh(
+    new THREE.TorusGeometry(BALL_R * 1.004, 0.055, 8, 48),
+    new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.35 })
+  );
+  band.rotation.y = Math.PI/2;
+  group.add(band);
+  scene.add(group);
+  return { body, group };
+}
+const ballA = makeBall(0x35d0ff, 0x0a6a92, -3, -5);
+const ballB = makeBall(0xff4d6d, 0x8a0f28,  3,  5);
+const guestTargets = {
+  a: { position: new THREE.Vector3(), quaternion: new THREE.Quaternion() },
+  b: { position: new THREE.Vector3(), quaternion: new THREE.Quaternion() },
+};
+let guestHasState = false;
+let guestResetGeneration = null;
+
+function ballSnapshot(ball) {
+  const { position: p, quaternion: q } = ball.body;
+  return { x: p.x, y: p.y, z: p.z, q: [q.x, q.y, q.z, q.w] };
+}
+
+function applyGuestState(data) {
+  if (!data?.a || !data?.b) return;
+  for (const key of ['a', 'b']) {
+    const remote = data[key];
+    if (![remote.x, remote.z].every(Number.isFinite)) return;
+    guestTargets[key].position.set(remote.x,
+      Number.isFinite(remote.y) ? remote.y : BALL_R, remote.z);
+    if (Array.isArray(remote.q) && remote.q.length === 4 && remote.q.every(Number.isFinite)) {
+      guestTargets[key].quaternion.set(...remote.q).normalize();
+    }
+  }
+  if (!guestHasState || data.r !== guestResetGeneration) {
+    ballA.group.position.copy(guestTargets.a.position);
+    ballA.group.quaternion.copy(guestTargets.a.quaternion);
+    ballB.group.position.copy(guestTargets.b.position);
+    ballB.group.quaternion.copy(guestTargets.b.quaternion);
+  }
+  guestHasState = true;
+  guestResetGeneration = data.r;
+
+  if (Array.isArray(data.s) && data.s.length === 2) {
+    if (data.s[0] > score[0]) showMsg('GOLO! 🔵', '#35d0ff');
+    else if (data.s[1] > score[1]) showMsg('GOLO! 🔴', '#ff4d6d');
+    score[0] = data.s[0]; score[1] = data.s[1];
+    s0El.textContent = score[0]; s1El.textContent = score[1];
+  }
+}
+
+/* ============================================================
+   SENSORES
+   ============================================================ */
+const sensor = {
+  ok: false, gx: 0, gy: 0,
+  baseX: 0, baseY: 0, buf: [],
+  calibrated: false, source: '—', lastEventTs: 0,
+};
+const statusEl = document.getElementById('status');
+const debugEl  = document.getElementById('debug');
+let debugOn = false;
+function setStatus(txt, cls = '') { statusEl.textContent = txt; statusEl.className = cls; }
+
+function screenAngle() {
+  if (screen.orientation && typeof screen.orientation.angle === 'number')
+    return ((screen.orientation.angle % 360) + 360) % 360;
+  const o = window.orientation;
+  return typeof o === 'number' ? ((o % 360) + 360) % 360 : 0;
+}
+function rotateToScreen(ax, ay) {
+  switch (screenAngle()) {
+    case 90:  return [ ay, -ax];
+    case 180: return [-ax, -ay];
+    case 270: return [-ay,  ax];
+    default:  return [ ax,  ay];
+  }
+}
+function feedGravity(ax, ay, source) {
+  const [sx, sy] = rotateToScreen(ax, ay);
+  sensor.gx = sx; sensor.gy = sy;
+  sensor.source = source; sensor.lastEventTs = performance.now();
+  if (!sensor.ok) { sensor.ok = true; setStatus('sensores ativos ✓', 'ok'); netlog('sensores ativos (' + source + ')', 'ok'); }
+  if (!sensor.calibrated) {
+    sensor.buf.push([sx, sy]);
+    if (sensor.buf.length >= 50) {
+      let bx = 0, by = 0;
+      for (const [x, y] of sensor.buf) { bx += x; by += y; }
+      sensor.baseX = bx / sensor.buf.length;
+      sensor.baseY = by / sensor.buf.length;
+      sensor.calibrated = true;
+      sensor.buf.length = 0;
+      netlog('calibração concluída', 'ok');
+    }
+  }
+}
+function onMotion(e) {
+  const a = e.accelerationIncludingGravity;
+  if (!a || a.x == null) return;
+  feedGravity(a.x, a.y, 'motion');
+}
+function onOrientation(e) {
+  if (e.beta == null || e.gamma == null) return;
+  if (sensor.source === 'motion' && performance.now() - sensor.lastEventTs < 250) return;
+  const b = e.beta * DEG, g = e.gamma * DEG;
+  const gx = -Math.cos(b) * Math.sin(g);
+  const gy = -Math.sin(b);
+  feedGravity(gx * 9.81, gy * 9.81, 'orientation');
+}
+
+/* ============================================================
+   INPUT
+   ============================================================ */
+const input = { x: 0, y: 0 };
+function updateInput(dt) {
+  let ix = 0, iy = 0;
+  if (sensor.ok && sensor.calibrated) {
+    const dx = INVERT_X * (sensor.gx - sensor.baseX) / 9.81 / MAX_TILT;
+    const dy = INVERT_Y * (sensor.gy - sensor.baseY) / 9.81 / MAX_TILT;
+    const mag = Math.hypot(dx, dy);
+    if (mag > DEADZONE) {
+      const s = Math.min(1, (mag - DEADZONE) / (1 - DEADZONE)) / mag;
+      ix = clamp(dx * s, -1, 1);
+      iy = clamp(dy * s, -1, 1);
+    }
+  }
+  const a = 1 - Math.exp(-18 * dt);
+  input.x = lerp(input.x, ix, a);
+  input.y = lerp(input.y, iy, a);
+}
+
+/* ============================================================
+   Física e IA
+   ============================================================ */
+function servo(body, ix, iy, dt) {
+  const k = 1 - Math.exp(-SERVO_K * dt);
+  body.velocity.x = lerp(body.velocity.x, ix * MAX_SPEED, k);
+  body.velocity.z = lerp(body.velocity.z, iy * MAX_SPEED, k);
+}
+function aiControl(dt) {
+  const dx = ballA.body.position.x - ballB.body.position.x;
+  const dz = ballA.body.position.z - ballB.body.position.z;
+  const d = Math.hypot(dx, dz) || 1;
+  servo(ballB.body, (dx / d) * 0.72, (dz / d) * 0.72, dt);
+}
+
+/* ============================================================
+   Golo / reset
+   ============================================================ */
+const score = [0, 0];
+const s0El = document.getElementById('s0');
+const s1El = document.getElementById('s1');
+const msgEl = document.getElementById('msg');
+let resetTimer = 0;
+let resetGeneration = 0;
+function showMsg(text, color) {
+  msgEl.textContent = text; msgEl.style.color = color; msgEl.style.opacity = '1';
+  setTimeout(() => { msgEl.style.opacity = '0'; }, 950);
+}
+function resetPositions() {
+  const set = (b, x, z) => {
+    b.body.position.set(x, BALL_R, z);
+    b.body.velocity.setZero();
+    b.body.angularVelocity.setZero();
+    b.body.quaternion.set(0, 0, 0, 1);
+  };
+  set(ballA, -3, -5); set(ballB, 3, 5);
+  ballA.group.position.copy(ballA.body.position);
+  ballA.group.quaternion.copy(ballA.body.quaternion);
+  ballB.group.position.copy(ballB.body.position);
+  ballB.group.quaternion.copy(ballB.body.quaternion);
+  resetGeneration++;
+}
+function resetMatch() {
+  score[0] = score[1] = 0;
+  s0El.textContent = s1El.textContent = '0';
+  resetTimer = 0;
+  resetPositions();
+}
+function checkGoal() {
+  for (const ball of [ballA, ballB]) {
+    const p = ball.body.position;
+    if (Math.abs(p.x) > GOAL_W / 2) continue;
+    if (p.z > HL + 0.7) {
+      score[0]++; s0El.textContent = score[0];
+      showMsg('GOLO! 🔵', '#35d0ff'); resetTimer = 1.4;
+      return;
+    }
+    if (p.z < -(HL + 0.7)) {
+      score[1]++; s1El.textContent = score[1];
+      showMsg('GOLO! 🔴', '#ff4d6d'); resetTimer = 1.4;
+      return;
+    }
+  }
+}
+
+/* ============================================================
+   REDE — Trystero 0.25.x
+   ============================================================ */
+const APP_ID = 'bola-pvp-simples-v1';
+const ROOM_CONFIG = {
+  appId: APP_ID,
+  trickleIce: true,
+  relayConfig: { redundancy: 3, warnOnRelayFailure: true },
+};
+
+// Observa a ligação WebRTC sem alterar ofertas, candidatos ou mensagens.
+const peerDiagnostics = [];
+class DiagnosticPeerConnection extends RTCPeerConnection {
+  constructor(config) {
+    super(config);
+    const id = peerDiagnostics.length + 1;
+    const info = { id, pc: this, host: 0, srflx: 0, relay: 0, other: 0 };
+    peerDiagnostics.push(info);
+    netlog(`PC ${id} criado`);
+    this.addEventListener('signalingstatechange', () =>
+      netlog(`PC ${id} sinalização: ${this.signalingState}`));
+    this.addEventListener('icegatheringstatechange', () =>
+      netlog(`PC ${id} recolha ICE: ${this.iceGatheringState}`));
+    this.addEventListener('iceconnectionstatechange', () =>
+      netlog(`PC ${id} ICE: ${this.iceConnectionState}`,
+        this.iceConnectionState === 'failed' ? 'er' : ''));
+    this.addEventListener('connectionstatechange', () =>
+      netlog(`PC ${id} ligação: ${this.connectionState}`,
+        this.connectionState === 'failed' ? 'er' : ''));
+    this.addEventListener('icecandidate', event => {
+      const candidate = event.candidate;
+      if (candidate) {
+        const type = candidate.type || / typ (host|srflx|relay|prflx)/.exec(candidate.candidate)?.[1];
+        if (type in info) info[type]++;
+        else info.other++;
+      } else {
+        netlog(`PC ${id} candidatos: host=${info.host} srflx=${info.srflx} relay=${info.relay} outros=${info.other}`);
+      }
+    });
+    this.addEventListener('icecandidateerror', event =>
+      netlog(`PC ${id} erro ICE ${event.errorCode}: ${event.errorText || 'sem detalhe'}`, 'wn'));
+  }
+}
+
+const observedRelaySockets = new WeakSet();
+const relayDiagnostics = new Map();
+function observeRelaySockets() {
+  try {
+    for (const [url, socket] of Object.entries(getRelaySockets?.() || {})) {
+      if (!socket || observedRelaySockets.has(socket)) continue;
+      observedRelaySockets.add(socket);
+      const stats = { events: 0, accepted: 0, rejected: 0, subscriptions: 0 };
+      relayDiagnostics.set(url, stats);
+      socket.addEventListener('message', event => {
+        let data;
+        try { data = JSON.parse(event.data); } catch (_) { return; }
+        if (data[0] === 'EVENT') {
+          stats.events++;
+          if (stats.events <= 3) netlog(`relay ${url}: sinal recebido #${stats.events}`, 'ok');
+        } else if (data[0] === 'OK') {
+          if (data[2]) stats.accepted++;
+          else {
+            stats.rejected++;
+            netlog(`relay ${url}: envio rejeitado (${data[3] || 'sem motivo'})`, 'er');
+          }
+        } else if (data[0] === 'EOSE') {
+          stats.subscriptions++;
+          if (stats.subscriptions === 1) netlog(`relay ${url}: subscrição ativa`, 'ok');
+        } else if (data[0] === 'CLOSED' || data[0] === 'NOTICE') {
+          netlog(`relay ${url}: ${data[0]} ${data[2] || data[1] || ''}`, 'wn');
+        }
+      });
+      socket.addEventListener('close', event =>
+        netlog(`relay ${url}: socket fechado (${event.code})`, 'wn'));
+      socket.addEventListener('error', () =>
+        netlog(`relay ${url}: erro de socket`, 'wn'));
+    }
+  } catch (e) { netlog('diagnóstico dos relays: ' + e.message, 'wn'); }
+}
+
+function logConnectionSnapshot() {
+  for (const [url, stats] of relayDiagnostics) {
+    netlog(`relay ${url}: recebidos=${stats.events}, aceites=${stats.accepted}, rejeitados=${stats.rejected}, subscrições=${stats.subscriptions}`);
+  }
+  if (!peerDiagnostics.length) netlog('nenhuma ligação WebRTC criada', 'wn');
+  for (const info of peerDiagnostics) {
+    netlog(`PC ${info.id}: sinalização=${info.pc.signalingState}, ICE=${info.pc.iceConnectionState}, candidatos host=${info.host} srflx=${info.srflx} relay=${info.relay}`);
+  }
+}
+
+let room = null;
+let isHost = false;
+let peerConnected = false;
+let online = false;
+let remoteInput = { x: 0, y: 0 };
+let roomCode = '';
+
+let stateAction = null;
+let inputAction = null;
+let stateInterval = null;
+let inputInterval = null;
+let relayWatchInterval = null;
+let joinTimeout = null;
+let webrtcJoinFailed = false;
+
+/* Código de sala por áudio: tom inicial + 5 símbolos base36 + verificação. */
+const AUDIO_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const AUDIO_START_HZ = 600;
+const AUDIO_SYMBOL_HZ = n => 950 + n * 65;
+let audioReceiver = null;
+let audioSender = null;
+
+function audioChecksum(code) {
+  return [...code].reduce((sum, char, i) =>
+    sum + (i + 1) * AUDIO_ALPHABET.indexOf(char), 0) % 36;
+}
+
+function stopAudioReceiver() {
+  if (!audioReceiver) return;
+  const { stream, context, timer } = audioReceiver;
+  clearInterval(timer);
+  stream.getTracks().forEach(track => track.stop());
+  context.close().catch(() => {});
+  audioReceiver = null;
+}
+
+async function emitRoomCode() {
+  if (audioSender || !roomCode) return;
+  const btn = document.getElementById('btnEmit');
+  const hint = document.getElementById('audioHint');
+  try {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) throw new Error('Áudio indisponível neste navegador.');
+    const context = new AudioContextClass();
+    audioSender = context;
+    await context.resume();
+    if (btn) btn.disabled = true;
+    if (hint) hint.textContent = 'A emitir… aproxima os telemóveis.';
+    const symbols = [...roomCode].map(char => AUDIO_ALPHABET.indexOf(char));
+    symbols.push(audioChecksum(roomCode));
+    const tones = [AUDIO_START_HZ, ...symbols.map(AUDIO_SYMBOL_HZ)];
+    let at = context.currentTime + 0.08;
+    tones.forEach((frequency, i) => {
+      const duration = i === 0 ? 0.48 : 0.28;
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = 'sine';
+      oscillator.frequency.value = frequency;
+      gain.gain.setValueAtTime(0, at);
+      gain.gain.linearRampToValueAtTime(0.42, at + 0.02);
+      gain.gain.setValueAtTime(0.42, at + duration - 0.02);
+      gain.gain.linearRampToValueAtTime(0, at + duration);
+      oscillator.connect(gain).connect(context.destination);
+      oscillator.start(at);
+      oscillator.stop(at + duration + 0.01);
+      at += duration + 0.18;
+    });
+    await new Promise(resolve => setTimeout(resolve, Math.ceil((at - context.currentTime) * 1000)));
+    if (hint?.isConnected) hint.textContent = 'Código emitido. Podes emitir novamente.';
+  } catch (e) {
+    netlog('erro a emitir código: ' + e.message, 'er');
+    if (hint?.isConnected) hint.textContent = e.message;
+  } finally {
+    const context = audioSender;
+    audioSender = null;
+    if (context) context.close().catch(() => {});
+    if (btn?.isConnected) btn.disabled = false;
+  }
+}
+
+function detectedTone(samples, sampleRate) {
+  let best = -1, bestPower = 0, nextPower = 0;
+  for (let i = -1; i < 36; i++) {
+    const frequency = i < 0 ? AUDIO_START_HZ : AUDIO_SYMBOL_HZ(i);
+    const coefficient = 2 * Math.cos(2 * Math.PI * frequency / sampleRate);
+    let previous = 0, before = 0;
+    for (let j = 0; j < samples.length; j++) {
+      const value = samples[j] + coefficient * previous - before;
+      before = previous;
+      previous = value;
+    }
+    const power = previous * previous + before * before - coefficient * previous * before;
+    if (power > bestPower) {
+      nextPower = bestPower;
+      bestPower = power;
+      best = i;
+    } else if (power > nextPower) {
+      nextPower = power;
+    }
+  }
+  // Amplitude aproximada do tom; a margem rejeita fala e ruído ambiente.
+  return 2 * Math.sqrt(bestPower) / samples.length > 0.004 &&
+    bestPower > nextPower * 1.5 ? best : null;
+}
+
+async function listenForRoomCode() {
+  const btn = document.getElementById('btnListen');
+  const hint = document.getElementById('audioHint');
+  if (audioReceiver) {
+    stopAudioReceiver();
+    btn.textContent = 'Ouvir';
+    hint.textContent = 'Escuta parada.';
+    return;
+  }
+  if (!navigator.mediaDevices?.getUserMedia || !(window.AudioContext || window.webkitAudioContext)) {
+    hint.textContent = 'Microfone indisponível. Abre o jogo em HTTPS.';
+    return;
+  }
+  btn.disabled = true;
+  hint.textContent = 'A pedir acesso ao microfone…';
+  let stream, context;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: {
+      echoCancellation: false, noiseSuppression: false, autoGainControl: false
+    } });
+    // O utilizador pode ter voltado ao menu enquanto autorizava o microfone.
+    if (!btn.isConnected) { stream.getTracks().forEach(t => t.stop()); return; }
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    context = new AudioContextClass();
+    await context.resume();
+    const source = context.createMediaStreamSource(stream);
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 4096;
+    source.connect(analyser);
+    const samples = new Float32Array(analyser.fftSize);
+    const receiver = { stream, context, timer: null };
+    audioReceiver = receiver;
+    btn.disabled = false;
+    btn.textContent = 'Parar de ouvir';
+    hint.textContent = 'À escuta… toca em “Emitir” no outro telemóvel.';
+    const SYMBOL_PERIOD_MS = 460;
+    let started = false, startVotes = 0, firstTone = null;
+    let firstToneVotes = 0, firstSymbolAt = 0, currentSlot = 0;
+    let votes = [], symbols = [];
+    const resetPacket = (message) => {
+      started = false;
+      startVotes = 0;
+      firstTone = null;
+      firstToneVotes = 0;
+      firstSymbolAt = 0;
+      currentSlot = 0;
+      votes = [];
+      symbols = [];
+      hint.textContent = message;
+    };
+    const finishSymbol = () => {
+      const counts = new Map();
+      votes.forEach(n => counts.set(n, (counts.get(n) || 0) + 1));
+      const [value, count] = [...counts].sort((a, b) => b[1] - a[1])[0] || [];
+      votes = [];
+      if (count < 2) {
+        netlog(`som incompleto no símbolo ${symbols.length + 1}/6`, 'wn');
+        resetPacket('Não consegui ouvir tudo. Pede para emitir novamente.');
+        return false;
+      }
+      symbols.push(value);
+      hint.textContent = `A receber código… ${symbols.length}/6`;
+      if (symbols.length !== 6) return true;
+      const code = symbols.slice(0, 5).map(n => AUDIO_ALPHABET[n]).join('');
+      if (audioChecksum(code) !== symbols[5]) {
+        netlog('código áudio não passou na verificação', 'wn');
+        resetPacket('Código não reconhecido. Pede para emitir novamente.');
+        return false;
+      }
+      netlog('código recebido por áudio: ' + code, 'ok');
+      document.getElementById('roomInput').value = code;
+      stopAudioReceiver();
+      joinRoomWithCode(code);
+      return false;
+    };
+    receiver.timer = setInterval(() => {
+      analyser.getFloatTimeDomainData(samples);
+      const tone = detectedTone(samples, context.sampleRate);
+      const now = performance.now();
+      if (!started) {
+        startVotes = tone === -1 ? startVotes + 1 : 0;
+        if (startVotes >= 3) {
+          started = true;
+          firstTone = null;
+          firstToneVotes = 0;
+          hint.textContent = 'A receber código…';
+        }
+        return;
+      }
+      if (!firstSymbolAt) {
+        if (tone === null || tone < 0) return;
+        firstToneVotes = tone === firstTone ? firstToneVotes + 1 : 1;
+        firstTone = tone;
+        if (firstToneVotes >= 2) {
+          firstSymbolAt = now;
+          votes.push(tone);
+        }
+        return;
+      }
+      // Cada símbolo ocupa um intervalo conhecido. O fim do último é
+      // reconhecido pelo relógio, mesmo quando o microfone não fica silencioso.
+      const slot = Math.floor((now - firstSymbolAt + 50) / SYMBOL_PERIOD_MS);
+      while (currentSlot < slot && currentSlot < 6) {
+        if (!finishSymbol()) return;
+        currentSlot++;
+      }
+      if (slot >= 6) {
+        resetPacket('Código incompleto. Pede para emitir novamente.');
+        return;
+      }
+      if (tone !== null && tone >= 0 &&
+          now - firstSymbolAt - slot * SYMBOL_PERIOD_MS < 320) {
+        votes.push(tone);
+      }
+    }, 30);
+  } catch (e) {
+    stream?.getTracks().forEach(track => track.stop());
+    context?.close().catch(() => {});
+    netlog('erro ao ouvir código: ' + e.message, 'er');
+    if (hint?.isConnected) hint.textContent = 'Não foi possível usar o microfone. Confirma a permissão e o HTTPS.';
+    if (btn?.isConnected) btn.disabled = false;
+  }
+}
+
+const btnSala = document.getElementById('btnSala');
+
+function cleanupRoom() {
+  stopAudioReceiver();
+  clearInterval(stateInterval);
+  clearInterval(inputInterval);
+  clearInterval(relayWatchInterval);
+  clearTimeout(joinTimeout);
+  stateInterval = inputInterval = relayWatchInterval = null;
+  joinTimeout = null;
+
+  try { room?.leave?.(); } catch (_) {}
+  room = null;
+  stateAction = null;
+  inputAction = null;
+  online = false;
+  peerConnected = false;
+  remoteInput.x = remoteInput.y = 0;
+  guestHasState = false;
+  guestResetGeneration = null;
+  cameraSide = -1;
+  updateCamera();
+}
+
+function relaySummary() {
+  try {
+    const sockets = getRelaySockets?.() || {};
+    const entries = Object.entries(sockets);
+    const urls = entries.filter(([, ws]) => ws?.readyState === WebSocket.OPEN)
+      .map(([url]) => url);
+    return { total: entries.length, open: urls.length, urls };
+  } catch (_) {
+    return { total: 0, open: 0, urls: [] };
+  }
+}
+
+function startRelayWatch() {
+  clearInterval(relayWatchInterval);
+  let last = '';
+  relayWatchInterval = setInterval(() => {
+    if (!room || peerConnected) return;
+    observeRelaySockets();
+    const { total, open, urls } = relaySummary();
+    const sig = urls.join(',');
+    if (sig !== last) {
+      netlog(`relays Nostr ligados: ${open}/${total}`, open ? 'ok' : 'wn');
+      if (open) netlog('relays ativos: ' + urls.join(', '));
+      last = sig;
+    }
+    if (open > 0) {
+      setStatus(isHost ? 'sala anunciada — à espera do adversário…' : 'relay ligado — a procurar host…', 'warn');
+    } else {
+      setStatus('a ligar aos relays…', 'warn');
+    }
+  }, 1000);
+}
+
+function handleJoinError(details) {
+  const err = details?.error;
+  const msg = err?.message || String(err || 'erro desconhecido');
+  const peer = details?.peerId ? ` peer=${details.peerId}` : '';
+  if (details?.peerId) webrtcJoinFailed = true;
+  netlog(`falha WebRTC${peer}: ${msg}`, 'er');
+  logConnectionSnapshot();
+  setStatus('falha de ligação WebRTC', 'err');
+}
+
+function setupRoom(code, host) {
+  cleanupRoom();
+  webrtcJoinFailed = false;
+  peerDiagnostics.length = 0;
+  for (const stats of relayDiagnostics.values()) {
+    stats.events = stats.accepted = stats.rejected = stats.subscriptions = 0;
+  }
+  isHost = host;
+  roomCode = code;
+  cameraSide = host ? -1 : 1;
+  updateCamera();
+  resetGeneration = 0;
+  resetMatch();
+
+  netlog(`joinRoom: app=${APP_ID} sala=${roomCode} Trystero=0.25.4`);
+  room = joinRoom({ ...ROOM_CONFIG, rtcPolyfill: DiagnosticPeerConnection },
+    roomCode, { onJoinError: handleJoinError });
+  observeRelaySockets();
+  online = true;
+  netlog('sala inicializada localmente', 'ok');
+
+  stateAction = room.makeAction('state');
+  inputAction = room.makeAction('input');
+
+  if (!stateAction?.send || !('onMessage' in stateAction)) {
+    throw new Error('API Trystero inesperada em action "state"');
+  }
+  if (!inputAction?.send || !('onMessage' in inputAction)) {
+    throw new Error('API Trystero inesperada em action "input"');
+  }
+
+  room.onPeerJoin = (peerId) => {
+    if (isHost && !peerConnected) resetMatch();
+    peerConnected = true;
+    clearTimeout(joinTimeout);
+    netlog('peer ligado: ' + peerId, 'ok');
+    setStatus(isHost ? 'adversário ligado ✓' : 'ligado ao host ✓', 'ok');
+    btnSala.style.display = isHost ? '' : 'none';
+    startGame();
+  };
+
+  room.onPeerLeave = (peerId) => {
+    peerConnected = false;
+    netlog('peer saiu: ' + peerId, 'wn');
+    setStatus('adversário saiu', 'warn');
+  };
+
+  startRelayWatch();
+}
+
+/* ----------------------------------------------------------
+   Criar sala
+---------------------------------------------------------- */
+function createRoom() {
+  netlog('botão "Criar sala" clicado');
+  try {
+    const code = Math.random().toString(36).slice(2, 7).toUpperCase();
+    setupRoom(code, true);
+
+    inputAction.onMessage = (data) => {
+      if (!data) return;
+      remoteInput.x = Number(data.x) || 0;
+      remoteInput.y = Number(data.y) || 0;
+    };
+
+    stateInterval = setInterval(() => {
+      if (!peerConnected) return;
+      stateAction.send({
+        a: ballSnapshot(ballA),
+        b: ballSnapshot(ballB),
+        s: [score[0], score[1]],
+        r: resetGeneration,
+      }).catch(e => netlog('erro a enviar state: ' + e.message, 'er'));
+    }, 33);
+
+    showOverlayHostWaiting(roomCode);
+    setStatus('a ligar aos relays…', 'warn');
+  } catch (e) {
+    netlog('ERRO em createRoom: ' + e.message, 'er');
+    cleanupRoom();
+    showOverlayError('Erro ao criar sala: ' + e.message);
+  }
+}
+
+/* ----------------------------------------------------------
+   Entrar em sala
+---------------------------------------------------------- */
+function joinRoomWithCode(code) {
+  netlog('a entrar na sala "' + code + '"');
+  try {
+    setupRoom(code, false);
+
+    stateAction.onMessage = applyGuestState;
+
+    inputInterval = setInterval(() => {
+      if (!peerConnected) return;
+      inputAction.send({ x: -input.x, y: -input.y })
+        .catch(e => netlog('erro a enviar input: ' + e.message, 'er'));
+    }, 33);
+
+    joinTimeout = setTimeout(() => {
+      if (!peerConnected) {
+        const { total, open } = relaySummary();
+        const detail = open === 0
+          ? 'Não foi possível contactar os relays de matchmaking.'
+          : webrtcJoinFailed
+            ? 'O host respondeu, mas a ligação WebRTC entre os telemóveis falhou.'
+            : 'Os relays estão ligados, mas o host não foi encontrado. Confirma o código e que o host continua na sala.';
+        netlog(`timeout: nenhum peer após 20s (relays ${open}/${total})`, 'er');
+        logConnectionSnapshot();
+        showOverlayError(detail);
+      }
+    }, 20000);
+
+    showOverlayJoining();
+    setStatus('a ligar aos relays…', 'warn');
+  } catch (e) {
+    netlog('ERRO em joinRoomWithCode: ' + e.message, 'er');
+    cleanupRoom();
+    showOverlayError('Erro ao entrar: ' + e.message);
+  }
+}
+
+function startGame() {
+  document.getElementById('overlay').classList.add('hidden');
+  setStatus('jogo a correr', 'ok');
+  netlog('jogo iniciado', 'ok');
+}
+
+/* ============================================================
+   Overlay dinâmico
+   ============================================================ */
+const overlay = document.getElementById('overlay');
+const overlayContent = document.getElementById('overlayContent');
+
+function attachNetlog() {
+  netlogEl = document.getElementById('netlog');
+  renderNetlog();
+}
+
+function showOverlayStart() {
+  overlay.classList.remove('hidden');
+  overlayContent.innerHTML = `
+    <h1>⚽ Bola PvP</h1>
+    <p>Segura o telemóvel à frente e inclina-o para mover a tua bola.</p>
+    <button class="btn" id="btnStart">ATIVAR SENSORES</button>
+    <div id="netlog"></div>
+  `;
+  attachNetlog();
+  document.getElementById('btnStart').addEventListener('click', requestSensors);
+  netlog(`diagnóstico ativo; navegador=${navigator.userAgent}; seguro=${window.isSecureContext}`);
+  netlog('pronto. toca em ATIVAR SENSORES');
+}
+
+function showOverlayMenu() {
+  stopAudioReceiver();
+  overlay.classList.remove('hidden');
+  overlayContent.innerHTML = `
+    <h1>⚽ Bola PvP</h1>
+    <p>Escolhe como queres jogar:</p>
+    <div class="row">
+      <button class="btn" id="btnCreate">Criar sala</button>
+      <button class="btn alt" id="btnJoin">Entrar em sala</button>
+    </div>
+    <div id="netlog"></div>
+  `;
+  attachNetlog();
+  document.getElementById('btnCreate').addEventListener('click', createRoom);
+  document.getElementById('btnJoin').addEventListener('click', showOverlayJoinInput);
+  netlog('menu pronto');
+}
+
+function showOverlayJoinInput() {
+  overlay.classList.remove('hidden');
+  overlayContent.innerHTML = `
+    <h1>Entrar em sala</h1>
+    <p>Introduz o código ou aproxima os telemóveis para o ouvir:</p>
+    <input id="roomInput" maxlength="5" placeholder="ABCDE" autocomplete="off" autocapitalize="characters">
+    <div class="row">
+      <button class="btn" id="btnDoJoin">Entrar</button>
+      <button class="btn alt" id="btnListen">Ouvir</button>
+      <button class="btn alt" id="btnBack">Voltar</button>
+    </div>
+    <p id="audioHint" role="status" aria-live="polite"></p>
+    <div id="netlog"></div>
+  `;
+  attachNetlog();
+  const inp = document.getElementById('roomInput');
+  inp.focus();
+  document.getElementById('btnDoJoin').addEventListener('click', () => {
+    const code = inp.value.trim().toUpperCase();
+    if (code.length < 4) { showOverlayError('Código inválido.'); return; }
+    stopAudioReceiver();
+    joinRoomWithCode(code);
+  });
+  document.getElementById('btnListen').addEventListener('click', listenForRoomCode);
+  document.getElementById('btnBack').addEventListener('click', showOverlayMenu);
+  netlog('à espera do código');
+}
+
+function showOverlayHostWaiting(code) {
+  overlay.classList.remove('hidden');
+  overlayContent.innerHTML = `
+    <h1>Sala criada</h1>
+    <p>Partilha este código com o teu adversário:</p>
+    <div class="code" id="roomCode">${code}</div>
+    <p style="font-size:13px;opacity:.7">Toque no código para copiar</p>
+    <button class="btn" id="btnEmit">Emitir</button>
+    <p id="audioHint" role="status" aria-live="polite">Emite o código pela coluna para o outro telemóvel ouvir.</p>
+    <div class="row">
+      <div id="spinner"></div>
+      <span style="color:#a8bcdc;font-size:14px">À espera de adversário…</span>
+    </div>
+    <button class="btn alt" id="btnCopyLog">Copiar diagnóstico</button>
+    <div id="netlog"></div>
+  `;
+  attachNetlog();
+  netlog('sala ' + code + ' à espera de peer', 'ok');
+  const codeEl = document.getElementById('roomCode');
+  document.getElementById('btnEmit').addEventListener('click', emitRoomCode);
+  document.getElementById('btnCopyLog').addEventListener('click', copyNetlog);
+  codeEl.addEventListener('click', () => {
+    navigator.clipboard?.writeText(code).then(() => showMsg('Copiado!', '#9ee7ff'));
+  });
+}
+
+function showOverlayJoining() {
+  overlay.classList.remove('hidden');
+  overlayContent.innerHTML = `
+    <h1>A ligar…</h1>
+    <div class="row"><div id="spinner"></div></div>
+    <p>A procurar o host…</p>
+    <button class="btn alt" id="btnCopyLog">Copiar diagnóstico</button>
+    <div id="netlog"></div>
+  `;
+  attachNetlog();
+  document.getElementById('btnCopyLog').addEventListener('click', copyNetlog);
+}
+
+function showOverlayError(msg) {
+  stopAudioReceiver();
+  overlay.classList.remove('hidden');
+  overlayContent.innerHTML = `
+    <h1>Ops…</h1>
+    <div class="err">${msg}</div>
+    <button class="btn alt" id="btnCopyLog">Copiar diagnóstico</button>
+    <button class="btn" id="btnRetry">Voltar ao menu</button>
+    <div id="netlog"></div>
+  `;
+  attachNetlog();
+  netlog(msg, 'er');
+  document.getElementById('btnCopyLog').addEventListener('click', copyNetlog);
+  document.getElementById('btnRetry').addEventListener('click', () => {
+    cleanupRoom();
+    roomCode = '';
+    showOverlayMenu();
+  });
+}
+
+/* ============================================================
+   Pedido de sensores
+   ============================================================ */
+async function requestSensors() {
+  if (!window.isSecureContext) {
+    showOverlayError('Contexto não seguro. Precisas de HTTPS ou localhost.');
+    return;
+  }
+
+  const pending = [];
+  let denOri = false, denMot = false;
+
+  try {
+    if (typeof DeviceMotionEvent !== 'undefined' &&
+        typeof DeviceMotionEvent.requestPermission === 'function') {
+      pending.push(
+        DeviceMotionEvent.requestPermission()
+          .then(r => { if (r !== 'granted') denMot = true; })
+          .catch(() => { denMot = true; })
+      );
+    }
+  } catch (_) { denMot = true; }
+
+  try {
+    if (typeof DeviceOrientationEvent !== 'undefined' &&
+        typeof DeviceOrientationEvent.requestPermission === 'function') {
+      pending.push(
+        DeviceOrientationEvent.requestPermission()
+          .then(r => { if (r !== 'granted') denOri = true; })
+          .catch(() => { denOri = true; })
+      );
+    }
+  } catch (_) { denOri = true; }
+
+  await Promise.all(pending);
+
+  if (denMot && denOri) {
+    showOverlayError('Permissão negada. Permite o acesso a Movimento e Orientação nas Definições.');
+    return;
+  }
+
+  window.addEventListener('devicemotion', onMotion, true);
+  window.addEventListener('deviceorientation', onOrientation, true);
+
+  setStatus('a aguardar sensores…', 'warn');
+  netlog('à espera de eventos de sensor…');
+
+  setTimeout(() => {
+    if (!sensor.ok) {
+      showOverlayError('Nenhum evento de sensor recebido. Confirma que estás em HTTPS.');
+    } else {
+      showOverlayMenu();
+    }
+  }, 1500);
+}
+
+/* ============================================================
+   Loop principal
+   ============================================================ */
+const knobEl = document.getElementById('knob');
+let last = performance.now();
+
+function tick(now) {
+  requestAnimationFrame(tick);
+  const dt = Math.min((now - last) / 1000, 0.05);
+  last = now;
+
+  updateInput(dt);
+
+  if (resetTimer > 0) {
+    resetTimer -= dt;
+    ballA.body.velocity.setZero();
+    ballB.body.velocity.setZero();
+    if (resetTimer <= 0) resetPositions();
+  } else if (!online || (isHost && peerConnected)) {
+    servo(ballA.body, input.x, input.y, dt);
+    if (online) servo(ballB.body, remoteInput.x, remoteInput.y, dt);
+    else aiControl(dt);
+    world.step(1/60, dt, 3);
+    if (ballA.body.position.y < -5 || ballB.body.position.y < -5) resetPositions();
+    else checkGoal();
+  } else if (isHost) {
+    ballA.body.velocity.setZero();
+    ballB.body.velocity.setZero();
+  }
+
+  if (isHost || !online) {
+    ballA.group.position.copy(ballA.body.position);
+    ballA.group.quaternion.copy(ballA.body.quaternion);
+    ballB.group.position.copy(ballB.body.position);
+    ballB.group.quaternion.copy(ballB.body.quaternion);
+  } else if (guestHasState) {
+    const blend = 1 - Math.exp(-24 * dt);
+    ballA.group.position.lerp(guestTargets.a.position, blend);
+    ballA.group.quaternion.slerp(guestTargets.a.quaternion, blend);
+    ballB.group.position.lerp(guestTargets.b.position, blend);
+    ballB.group.quaternion.slerp(guestTargets.b.quaternion, blend);
+  }
+
+  knobEl.style.transform = `translate(${input.x * 30}px, ${-input.y * 30}px)`;
+
+  if (debugOn) {
+    const ang = screenAngle();
+    debugEl.textContent =
+      `papel      : ${isHost ? 'host' : online ? 'guest' : 'offline'}\n` +
+      `online     : ${online ? 'sim' : 'não'} / peer: ${peerConnected ? 'sim' : 'não'}\n` +
+      `sala       : ${roomCode || '—'}\n` +
+      `input      : ${input.x.toFixed(2)}  ${input.y.toFixed(2)}\n` +
+      `remote     : ${remoteInput.x.toFixed(2)}  ${remoteInput.y.toFixed(2)}\n` +
+      `ecrã       : ${ang}°\n` +
+      `vel A      : ${ballA.body.velocity.length().toFixed(1)}`;
+  }
+
+  renderer.render(scene, camera);
+}
+requestAnimationFrame(tick);
+
+/* ============================================================
+   Botões fixos
+   ============================================================ */
+document.getElementById('btnCal').addEventListener('click', () => {
+  sensor.calibrated = false;
+  sensor.buf.length = 0;
+  showMsg('Calibrado', '#9ee7ff');
+});
+
+document.getElementById('btnDbg').addEventListener('click', (e) => {
+  debugOn = !debugOn;
+  debugEl.style.display = debugOn ? 'block' : 'none';
+  e.currentTarget.style.opacity = debugOn ? '1' : '0.65';
+});
+
+btnSala.addEventListener('click', () => {
+  if (roomCode) {
+    navigator.clipboard?.writeText(roomCode).then(() => showMsg('Código copiado!', '#9ee7ff'));
+  }
+});
+
+addEventListener('resize', () => {
+  renderer.setSize(innerWidth, innerHeight);
+  updateCamera();
+});
+addEventListener('orientationchange', () => {
+  sensor.calibrated = false;
+  sensor.buf.length = 0;
+});
+
+/* ============================================================
+   Arranque
+   ============================================================ */
+showOverlayStart();
+</script>
+</body>
+</html>
+<!doctype html>
+<html lang="pt">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0e1330">
+<title>Bola PvP — Online</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: #0e1330;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    user-select: none; -webkit-user-select: none;
+    touch-action: none;
+  }
+  canvas { display: block; }
+  #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
+  #score {
+    position: absolute; top: max(10px, env(safe-area-inset-top)); left: 50%;
+    transform: translateX(-50%);
+    display: flex; gap: 14px; align-items: center;
+    font-weight: 800; font-size: 26px; letter-spacing: 1px;
+    color: #fff; text-shadow: 0 2px 10px rgba(0,0,0,.6);
+  }
+  #score .p1 { color: #35d0ff; }
+  #score .p2 { color: #ff4d6d; }
+  #score .dash { opacity: .35; }
+  #status {
+    position: absolute; top: max(52px, calc(env(safe-area-inset-top) + 52px));
+    left: 50%; transform: translateX(-50%);
+    font-size: 12px; font-weight: 600; letter-spacing: .5px;
+    padding: 4px 12px; border-radius: 999px;
+    background: rgba(8,12,28,.7);
+    border: 1px solid rgba(120,160,255,.3);
+    color: #9fb3d1;
+    white-space: nowrap;
+  }
+  #status.ok   { color: #7dffb0; border-color: rgba(125,255,176,.5); }
+  #status.warn { color: #ffd166; border-color: rgba(255,209,102,.5); }
+  #status.err  { color: #ff6b81; border-color: rgba(255,107,129,.5); }
+  #stick {
+    position: absolute; left: 18px; bottom: max(28px, calc(env(safe-area-inset-bottom) + 28px));
+    width: 96px; height: 96px; border-radius: 50%;
+    background: rgba(10,18,40,.55);
+    border: 2px solid rgba(120,170,255,.3);
+    display: grid; place-items: center;
+  }
+  #knob {
+    width: 32px; height: 32px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #b6ecff, #35d0ff);
+    box-shadow: 0 0 14px rgba(53,208,255,.8);
+    will-change: transform;
+  }
+  #stick .lbl {
+    position: absolute; bottom: -20px; left: 50%; transform: translateX(-50%);
+    font-size: 11px; color: #9fb3d1; white-space: nowrap;
+  }
+  #debug {
+    position: absolute; left: 10px; bottom: max(140px, calc(env(safe-area-inset-bottom) + 140px));
+    font: 11px/1.5 ui-monospace, Menlo, Consolas, monospace;
+    color: #9fb3d1; background: rgba(8,12,28,.75);
+    border: 1px solid rgba(120,160,255,.25); border-radius: 10px;
+    padding: 8px 10px; white-space: pre; display: none;
+  }
+  #bar {
+    position: absolute; right: 14px; bottom: max(28px, calc(env(safe-area-inset-bottom) + 28px));
+    display: flex; flex-direction: column; gap: 10px; align-items: flex-end;
+  }
+  .btn {
+    pointer-events: auto;
+    appearance: none; border: 0; cursor: pointer;
+    padding: 12px 18px; border-radius: 999px;
+    font-weight: 700; font-size: 14px; color: #06122a;
+    background: linear-gradient(180deg,#9ee7ff,#4fc3f7);
+    box-shadow: 0 5px 0 #1b6f9c, 0 7px 18px rgba(0,0,0,.45);
+    transition: transform .06s, box-shadow .06s;
+    font-family: inherit;
+  }
+  .btn:active { transform: translateY(3px); box-shadow: 0 2px 0 #1b6f9c, 0 4px 10px rgba(0,0,0,.45); }
+  .btn.alt { background: linear-gradient(180deg,#ffe08a,#ffc107); box-shadow: 0 5px 0 #a67c00, 0 7px 18px rgba(0,0,0,.45); }
+  .btn.alt:active { box-shadow: 0 2px 0 #a67c00, 0 4px 10px rgba(0,0,0,.45); }
+  .btn:disabled { opacity: .45; filter: grayscale(.4); pointer-events: none; }
+  #overlay {
+    position: fixed; inset: 0; z-index: 20;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 18px; text-align: center; padding: 24px;
+    background: radial-gradient(circle at 50% 40%, rgba(40,60,140,.94), rgba(6,9,24,.99));
+    color: #e9f2ff;
+  }
+  #overlay.hidden { display: none; }
+  #overlay h1 { margin: 0; font-size: clamp(26px, 7vw, 44px); letter-spacing: -.5px; }
+  #overlay p { margin: 0; max-width: 38ch; line-height: 1.55; color: #a8bcdc; font-size: 15px; }
+  #overlay .err {
+    max-width: 38ch; padding: 12px 16px; border-radius: 12px;
+    background: rgba(255,60,90,.12); border: 1px solid rgba(255,60,90,.45);
+    color: #ffb3bf; font-size: 14px; line-height: 1.5;
+  }
+  #overlay .row { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; align-items: center; }
+  #overlay input {
+    pointer-events: auto;
+    font-size: 20px; font-weight: 700; letter-spacing: 4px;
+    text-align: center; text-transform: uppercase;
+    padding: 12px 16px; border-radius: 12px;
+    border: 2px solid rgba(120,170,255,.4);
+    background: rgba(6,12,28,.8); color: #e9f2ff;
+    width: 200px; font-family: inherit;
+    outline: none;
+  }
+  #overlay input:focus { border-color: #4fc3f7; }
+  #audioHint { min-height: 1.5em; font-size: 13px !important; }
+  .code {
+    font: 800 28px/1 ui-monospace, Menlo, Consolas, monospace;
+    letter-spacing: 6px; color: #9ee7ff;
+    background: rgba(6,12,28,.8);
+    border: 2px dashed rgba(120,170,255,.5);
+    border-radius: 12px; padding: 12px 20px;
+    user-select: all; -webkit-user-select: all;
+    cursor: pointer;
+  }
+  #msg {
+    position: absolute; top: 42%; left: 50%; transform: translate(-50%,-50%);
+    font-size: clamp(28px, 9vw, 52px); font-weight: 900; color: #fff; opacity: 0;
+    text-shadow: 0 4px 24px rgba(0,0,0,.75); transition: opacity .25s;
+    white-space: nowrap;
+  }
+  #spinner {
+    width: 22px; height: 22px; border-radius: 50%;
+    border: 3px solid rgba(120,170,255,.25);
+    border-top-color: #4fc3f7;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  #netlog {
+    width: min(90vw, 460px);
+    max-height: 32vh; overflow-y: auto;
+    font: 11px/1.5 ui-monospace, Menlo, Consolas, monospace;
+    color: #a8bcdc;
+    background: rgba(6,10,22,.85);
+    border: 1px solid rgba(120,170,255,.3);
+    border-radius: 10px;
+    padding: 10px 12px;
+    text-align: left;
+    white-space: pre-wrap;
+    word-break: break-all;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(120,170,255,.4) transparent;
+    user-select: text; -webkit-user-select: text;
+  }
+  #netlog::-webkit-scrollbar { width: 6px; }
+  #netlog::-webkit-scrollbar-thumb { background: rgba(120,170,255,.4); border-radius: 3px; }
+  #netlog .t  { color: #6f88a8; }
+  #netlog .ok { color: #7dffb0; }
+  #netlog .er { color: #ff8095; }
+  #netlog .wn { color: #ffd166; }
+</style>
+</head>
+<body>
+
+<div id="hud">
+  <div id="score">
+    <span class="p1" id="s0">0</span><span class="dash">–</span><span class="p2" id="s1">0</span>
+  </div>
+  <div id="status">a aguardar sensores…</div>
+  <div id="stick"><div id="knob"></div><div class="lbl">inclinação</div></div>
+  <div id="debug"></div>
+  <div id="msg"></div>
+  <div id="bar">
+    <button class="btn" id="btnCal">Calibrar</button>
+    <button class="btn alt" id="btnSala" style="display:none">Sala</button>
+    <button class="btn alt" id="btnDbg">Debug</button>
+  </div>
+</div>
+
+<div id="overlay">
+  <div id="overlayContent"></div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "cannon-es": "https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js",
+    "trystero": "https://cdn.jsdelivr.net/npm/trystero@0.25.4/+esm"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import * as CANNON from 'cannon-es';
+import { joinRoom, getRelaySockets } from 'trystero';
+
+/* ============================================================
+   LOG DE REDE
+   ============================================================ */
+let netlogEl = null;
+const netlogEntries = [];
+function renderNetlog() {
+  if (!netlogEl) return;
+  const fragment = document.createDocumentFragment();
+  for (const { ts, msg, cls } of netlogEntries) {
+    const time = document.createElement('span');
+    time.className = 't';
+    time.textContent = `[${ts}]`;
+    fragment.append(time, ' ');
+    if (cls) {
+      const body = document.createElement('span');
+      body.className = cls;
+      body.textContent = msg;
+      fragment.append(body);
+    } else {
+      fragment.append(msg);
+    }
+    fragment.append('\n');
+  }
+  netlogEl.replaceChildren(fragment);
+  netlogEl.scrollTop = netlogEl.scrollHeight;
+}
+function netlog(msg, cls = '') {
+  const ts = new Date().toLocaleTimeString('pt-PT', { hour12: false });
+  msg = String(msg);
+  console.log('[net]', msg);
+  netlogEntries.push({ ts, msg, cls });
+  if (netlogEntries.length > 500) netlogEntries.shift();
+  renderNetlog();
+}
+
+async function copyNetlog(event) {
+  const button = event.currentTarget;
+  const report = `Página: ${location.origin + location.pathname}\nNavegador: ${navigator.userAgent}\n` +
+    netlogEntries.map(({ ts, msg }) => `[${ts}] ${msg}`).join('\n');
+  try {
+    await navigator.clipboard.writeText(report);
+    button.textContent = 'Diagnóstico copiado ✓';
+  } catch (_) {
+    button.textContent = 'Não foi possível copiar';
+  }
+}
+
+document.addEventListener('visibilitychange', () =>
+  netlog('página ' + document.visibilityState));
+window.addEventListener('online', () => netlog('navegador online'));
+window.addEventListener('offline', () => netlog('navegador offline', 'er'));
+
+/* ============================================================
+   Utils / Constantes
+   ============================================================ */
+const DEG = Math.PI / 180;
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const lerp  = (a, b, t) => a + (b - a) * t;
+
+const FIELD_W = 12, FIELD_L = 18;
+const HW = FIELD_W / 2, HL = FIELD_L / 2;
+const GOAL_W = 5, GOAL_D = 2.2;
+const WALL_T = 0.5, WALL_H = 1.5;
+const BALL_R = 0.7;
+
+const MAX_SPEED = 9;
+const SERVO_K   = 7;
+const MAX_TILT  = 0.45;
+const DEADZONE  = 0.03;
+
+const INVERT_X = 1;
+const INVERT_Y = -1;
+
+/* ============================================================
+   Renderer / Cena / Câmara
+   ============================================================ */
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0e1330);
+scene.fog = new THREE.Fog(0x0e1330, 48, 95);
+
+const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.5, 250);
 function updateCamera() {
   camera.aspect = innerWidth / innerHeight;
   const tanV = Math.tan((camera.fov * DEG) / 2);
