@@ -628,6 +628,7 @@ let stateInterval = null;
 let inputInterval = null;
 let relayWatchInterval = null;
 let joinTimeout = null;
+let webrtcJoinFailed = false;
 
 /* Código de sala por áudio: tom inicial + 5 símbolos base36 + verificação. */
 const AUDIO_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -900,6 +901,7 @@ function handleJoinError(details) {
   const err = details?.error;
   const msg = err?.message || String(err || 'erro desconhecido');
   const peer = details?.peerId ? ` peer=${details.peerId}` : '';
+  if (details?.peerId) webrtcJoinFailed = true;
   netlog(`falha WebRTC${peer}: ${msg}`, 'er');
   logConnectionSnapshot();
   setStatus('falha de ligação WebRTC', 'err');
@@ -907,6 +909,7 @@ function handleJoinError(details) {
 
 function setupRoom(code, host) {
   cleanupRoom();
+  webrtcJoinFailed = false;
   peerDiagnostics.length = 0;
   for (const stats of relayDiagnostics.values()) {
     stats.events = stats.accepted = stats.rejected = stats.subscriptions = 0;
@@ -1019,7 +1022,9 @@ function joinRoomWithCode(code) {
         const { total, open } = relaySummary();
         const detail = open === 0
           ? 'Não foi possível contactar os relays de matchmaking.'
-          : 'Os relays estão ligados, mas o host não foi encontrado. Confirma o código e que o host continua na sala.';
+          : webrtcJoinFailed
+            ? 'O host respondeu, mas a ligação WebRTC entre os telemóveis falhou.'
+            : 'Os relays estão ligados, mas o host não foi encontrado. Confirma o código e que o host continua na sala.';
         netlog(`timeout: nenhum peer após 20s (relays ${open}/${total})`, 'er');
         logConnectionSnapshot();
         showOverlayError(detail);
