@@ -27,6 +27,10 @@
   #score .p1 { color: #35d0ff; }
   #score .p2 { color: #ff4d6d; }
   #score .dash { opacity: .35; }
+  #buildInfo {
+    position: absolute; top: max(80px, calc(env(safe-area-inset-top) + 80px));
+    width: 100%; text-align: center; font: 11px system-ui; color: #9badca;
+  }
   #status {
     position: absolute; top: max(52px, calc(env(safe-area-inset-top) + 52px));
     left: 50%; transform: translateX(-50%);
@@ -164,6 +168,7 @@
     <span class="p1" id="s0">0</span><span class="dash">–</span><span class="p2" id="s1">0</span>
   </div>
   <div id="status">a aguardar sensores…</div>
+  <div id="buildInfo"></div>
   <div id="stick"><div id="knob"></div><div class="lbl">inclinação</div></div>
   <div id="debug"></div>
   <div id="msg"></div>
@@ -230,7 +235,7 @@ function netlog(msg, cls = '') {
 
 async function copyNetlog(event) {
   const button = event.currentTarget;
-  const report = `Página: ${location.origin + location.pathname}\nNavegador: ${navigator.userAgent}\n` +
+  const report = `Jogo: ${GAME_BUILD}\nPágina: ${location.origin + location.pathname}\nNavegador: ${navigator.userAgent}\n` +
     netlogEntries.map(({ ts, msg }) => `[${ts}] ${msg}`).join('\n');
   try {
     await navigator.clipboard.writeText(report);
@@ -249,6 +254,9 @@ window.addEventListener('offline', () => netlog('navegador offline', 'er'));
    Utils / Constantes
    ============================================================ */
 const DEG = Math.PI / 180;
+const GAME_BUILD = '2026.10.12.2';
+const buildInfo = document.getElementById('buildInfo');
+buildInfo.textContent = 'Jogo ' + GAME_BUILD;
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const lerp  = (a, b, t) => a + (b - a) * t;
 
@@ -395,14 +403,16 @@ function makeBall(color, emissive, x, z) {
   scene.add(group);
   return { body, group };
 }
-const ballA = makeBall(0x35d0ff, 0x0a6a92, -3, -5);
-const ballB = makeBall(0xff4d6d, 0x8a0f28,  3,  5);
+const ballA = makeBall(0x35d0ff, 0x0a6a92, 0, -5);
+const ballB = makeBall(0xff4d6d, 0x8a0f28, 0,  5);
 const guestTargets = {
   a: { position: new THREE.Vector3(), quaternion: new THREE.Quaternion() },
   b: { position: new THREE.Vector3(), quaternion: new THREE.Quaternion() },
 };
 let guestHasState = false;
 let guestResetGeneration = null;
+const guestFrames = [];
+let guestClockOffset = null;
 
 function ballSnapshot(ball) {
   const { position: p, quaternion: q } = ball.body;
@@ -410,7 +420,8 @@ function ballSnapshot(ball) {
 }
 
 function applyGuestState(data) {
-  if (!data?.a || !data?.b) return;
+  if (!checkPeerBuild(data)) return;
+  if (!data?.a || !data?.b || !Number.isFinite(data.t)) return;
   for (const key of ['a', 'b']) {
     const remote = data[key];
     if (![remote.x, remote.z].every(Number.isFinite)) return;
@@ -421,6 +432,7 @@ function applyGuestState(data) {
     }
   }
   if (!guestHasState || data.r !== guestResetGeneration) {
+    guestFrames.length = 0;
     ballA.group.position.copy(guestTargets.a.position);
     ballA.group.quaternion.copy(guestTargets.a.quaternion);
     ballB.group.position.copy(guestTargets.b.position);
@@ -428,12 +440,34 @@ function applyGuestState(data) {
   }
   guestHasState = true;
   guestResetGeneration = data.r;
+  const offset = performance.now() - data.t;
+  guestClockOffset = guestClockOffset === null ? offset : Math.min(guestClockOffset, offset);
+  guestFrames.push({
+    t: data.t,
+    a: { position: guestTargets.a.position.clone(), quaternion: guestTargets.a.quaternion.clone() },
+    b: { position: guestTargets.b.position.clone(), quaternion: guestTargets.b.quaternion.clone() },
+  });
+  if (guestFrames.length > 12) guestFrames.shift();
 
   if (Array.isArray(data.s) && data.s.length === 2) {
     if (data.s[0] > score[0]) showMsg('GOLO! 🔵', '#35d0ff');
     else if (data.s[1] > score[1]) showMsg('GOLO! 🔴', '#ff4d6d');
     score[0] = data.s[0]; score[1] = data.s[1];
     s0El.textContent = score[0]; s1El.textContent = score[1];
+  }
+}
+
+function renderGuest(now) {
+  if (!guestFrames.length) return;
+  // Duas amostras do host permitem animar a 60 Hz sem saltos a cada pacote.
+  const renderTime = now - guestClockOffset - 60;
+  while (guestFrames.length > 2 && guestFrames[1].t <= renderTime) guestFrames.shift();
+  const from = guestFrames[0];
+  const to = guestFrames[1] || from;
+  const blend = to.t > from.t ? clamp((renderTime - from.t) / (to.t - from.t), 0, 1) : 1;
+  for (const [key, ball] of [['a', ballA], ['b', ballB]]) {
+    ball.group.position.lerpVectors(from[key].position, to[key].position, blend);
+    ball.group.quaternion.slerpQuaternions(from[key].quaternion, to[key].quaternion, blend);
   }
 }
 
@@ -541,6 +575,8 @@ const s1El = document.getElementById('s1');
 const msgEl = document.getElementById('msg');
 let resetTimer = 0;
 let resetGeneration = 0;
+let kickoffTimer = 0;
+let gameRunning = false;
 function showMsg(text, color) {
   msgEl.textContent = text; msgEl.style.color = color; msgEl.style.opacity = '1';
   setTimeout(() => { msgEl.style.opacity = '0'; }, 950);
@@ -552,12 +588,13 @@ function resetPositions() {
     b.body.angularVelocity.setZero();
     b.body.quaternion.set(0, 0, 0, 1);
   };
-  set(ballA, -3, -5); set(ballB, 3, 5);
+  set(ballA, 0, -5); set(ballB, 0, 5);
   ballA.group.position.copy(ballA.body.position);
   ballA.group.quaternion.copy(ballA.body.quaternion);
   ballB.group.position.copy(ballB.body.position);
   ballB.group.quaternion.copy(ballB.body.quaternion);
   resetGeneration++;
+  kickoffTimer = 1;
 }
 function resetMatch() {
   score[0] = score[1] = 0;
@@ -686,6 +723,18 @@ let inputInterval = null;
 let relayWatchInterval = null;
 let joinTimeout = null;
 let webrtcJoinFailed = false;
+let peerVersionMismatch = false;
+
+function checkPeerBuild(data) {
+  if (data?.v === GAME_BUILD) return true;
+  if (!peerVersionMismatch) {
+    peerVersionMismatch = true;
+    netlog(`versões diferentes: local=${GAME_BUILD}, adversário=${data?.v || 'antiga'}`, 'er');
+    cleanupRoom();
+    showOverlayError('Os telemóveis têm versões diferentes do jogo. Abre a versão ' + GAME_BUILD + ' nos dois e cria uma nova sala.');
+  }
+  return false;
+}
 
 /* Código de sala por áudio: tom inicial + 5 símbolos base36 + verificação. */
 const AUDIO_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
@@ -917,10 +966,13 @@ function cleanupRoom() {
   stateAction = null;
   inputAction = null;
   online = false;
+  gameRunning = false;
   peerConnected = false;
   remoteInput.x = remoteInput.y = 0;
   guestHasState = false;
   guestResetGeneration = null;
+  guestFrames.length = 0;
+  guestClockOffset = null;
   cameraSide = -1;
   updateCamera();
 }
@@ -971,6 +1023,7 @@ function handleJoinError(details) {
 function setupRoom(code, host) {
   cleanupRoom();
   webrtcJoinFailed = false;
+  peerVersionMismatch = false;
   peerDiagnostics.length = 0;
   for (const stats of relayDiagnostics.values()) {
     stats.events = stats.accepted = stats.rejected = stats.subscriptions = 0;
@@ -978,6 +1031,7 @@ function setupRoom(code, host) {
   isHost = host;
   roomCode = code;
   cameraSide = host ? -1 : 1;
+  buildInfo.textContent = `Jogo ${GAME_BUILD} · ${host ? 'Host 🔵' : 'Convidado 🔴'}`;
   updateCamera();
   resetGeneration = 0;
   resetMatch();
@@ -1028,7 +1082,7 @@ function createRoom() {
     setupRoom(code, true);
 
     inputAction.onMessage = (data) => {
-      if (!data) return;
+      if (!checkPeerBuild(data)) return;
       remoteInput.x = Number(data.x) || 0;
       remoteInput.y = Number(data.y) || 0;
     };
@@ -1036,6 +1090,8 @@ function createRoom() {
     stateInterval = setInterval(() => {
       if (!peerConnected) return;
       stateAction.send({
+        v: GAME_BUILD,
+        t: performance.now(),
         a: ballSnapshot(ballA),
         b: ballSnapshot(ballB),
         s: [score[0], score[1]],
@@ -1064,7 +1120,7 @@ function joinRoomWithCode(code) {
 
     inputInterval = setInterval(() => {
       if (!peerConnected) return;
-      inputAction.send({ x: -input.x, y: -input.y })
+      inputAction.send({ v: GAME_BUILD, x: -input.x, y: -input.y })
         .catch(e => netlog('erro a enviar input: ' + e.message, 'er'));
     }, 33);
 
@@ -1092,6 +1148,7 @@ function joinRoomWithCode(code) {
 }
 
 function startGame() {
+  gameRunning = true;
   document.getElementById('overlay').classList.add('hidden');
   setStatus('jogo a correr', 'ok');
   netlog('jogo iniciado', 'ok');
@@ -1106,6 +1163,18 @@ const overlayContent = document.getElementById('overlayContent');
 function attachNetlog() {
   netlogEl = document.getElementById('netlog');
   renderNetlog();
+  const version = document.createElement('div');
+  version.style.cssText = 'font:11px system-ui;color:#9badca';
+  version.append('Jogo ' + GAME_BUILD + ' · ');
+  const reload = document.createElement('a');
+  reload.textContent = 'Recarregar';
+  reload.style.color = '#9ee7ff';
+  const url = new URL(location.href);
+  url.searchParams.set('v', GAME_BUILD);
+  url.searchParams.set('reload', Date.now());
+  reload.href = url.href;
+  version.append(reload);
+  overlayContent.append(version);
 }
 
 function showOverlayStart() {
@@ -1118,7 +1187,7 @@ function showOverlayStart() {
   `;
   attachNetlog();
   document.getElementById('btnStart').addEventListener('click', requestSensors);
-  netlog(`diagnóstico ativo; navegador=${navigator.userAgent}; seguro=${window.isSecureContext}`);
+  netlog(`diagnóstico ativo; jogo=${GAME_BUILD}; navegador=${navigator.userAgent}; seguro=${window.isSecureContext}`);
   netlog('pronto. toca em ATIVAR SENSORES');
 }
 
@@ -1296,12 +1365,14 @@ function tick(now) {
 
   updateInput(dt);
 
-  if (resetTimer > 0) {
+  if (gameRunning && isHost && resetTimer > 0) {
     resetTimer -= dt;
     ballA.body.velocity.setZero();
     ballB.body.velocity.setZero();
     if (resetTimer <= 0) resetPositions();
-  } else if (!online || (isHost && peerConnected)) {
+  } else if (gameRunning && isHost && kickoffTimer > 0) {
+    kickoffTimer = Math.max(0, kickoffTimer - dt);
+  } else if (gameRunning && isHost && peerConnected) {
     servo(ballA.body, input.x, input.y, dt);
     if (online) servo(ballB.body, remoteInput.x, remoteInput.y, dt);
     else aiControl(dt);
@@ -1319,11 +1390,7 @@ function tick(now) {
     ballB.group.position.copy(ballB.body.position);
     ballB.group.quaternion.copy(ballB.body.quaternion);
   } else if (guestHasState) {
-    const blend = 1 - Math.exp(-24 * dt);
-    ballA.group.position.lerp(guestTargets.a.position, blend);
-    ballA.group.quaternion.slerp(guestTargets.a.quaternion, blend);
-    ballB.group.position.lerp(guestTargets.b.position, blend);
-    ballB.group.quaternion.slerp(guestTargets.b.quaternion, blend);
+    renderGuest(now);
   }
 
   knobEl.style.transform = `translate(${input.x * 30}px, ${-input.y * 30}px)`;
