@@ -183,7 +183,8 @@
   "imports": {
     "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
     "cannon-es": "https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js",
-    "trystero": "https://cdn.jsdelivr.net/npm/trystero@0.26.0/+esm"
+    "trystero": "https://cdn.jsdelivr.net/npm/trystero@0.26.0/+esm",
+    "trystero-mqtt": "https://cdn.jsdelivr.net/npm/@trystero-p2p/mqtt@0.26.0/+esm"
   }
 }
 </script>
@@ -192,6 +193,7 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import { joinRoom, getRelaySockets } from 'trystero';
+import { joinRoom as joinMqttRoom, getRelaySockets as getMqttRelaySockets } from 'trystero-mqtt';
 
 /* ============================================================
    LOG DE REDE
@@ -494,7 +496,7 @@ function checkGoal() {
    REDE — Trystero 0.26.x
    ============================================================ */
 const APP_ID = 'bola-pvp-simples-v1';
-const APP_BUILD = '12.10.2026 · rede 0.26.0';
+const APP_BUILD = '12.10.2026 · rede 0.26.0 Nostr+MQTT';
 const ROOM_CONFIG = {
   appId: APP_ID,
   trickleIce: true,
@@ -509,8 +511,13 @@ const ROOM_CONFIG = {
     warnOnRelayFailure: true,
   },
 };
+const MQTT_CONFIG = {
+  appId: APP_ID,
+  trickleIce: true,
+  relayConfig: { redundancy: 4, warnOnRelayFailure: true },
+};
 
-let room = null;
+let roomRecords = [];
 let isHost = false;
 let peerConnected = false;
 let online = false;
@@ -750,8 +757,10 @@ function cleanupRoom() {
   stateInterval = inputInterval = relayWatchInterval = null;
   joinTimeout = null;
 
-  try { room?.leave?.(); } catch (_) {}
-  room = null;
+  for (const record of roomRecords) {
+    try { record.room.leave(); } catch (_) {}
+  }
+  roomRecords = [];
   stateAction = null;
   inputAction = null;
   online = false;
@@ -759,9 +768,9 @@ function cleanupRoom() {
   remoteInput.x = remoteInput.y = 0;
 }
 
-function relaySummary() {
+function relaySummary(getSockets) {
   try {
-    const sockets = getRelaySockets?.() || {};
+    const sockets = getSockets?.() || {};
     const entries = Object.entries(sockets);
     const connected = entries.filter(([, ws]) => ws?.readyState === WebSocket.OPEN);
     return { total: entries.length, open: connected.length,
@@ -775,28 +784,32 @@ function startRelayWatch() {
   clearInterval(relayWatchInterval);
   let last = '';
   relayWatchInterval = setInterval(() => {
-    if (!room || peerConnected) return;
-    const { total, open, urls } = relaySummary();
-    const sig = urls.join(',');
+    if (!roomRecords.length || peerConnected) return;
+    const nostr = relaySummary(getRelaySockets);
+    const mqtt = relaySummary(getMqttRelaySockets);
+    const sig = [...nostr.urls, '|', ...mqtt.urls].join(',');
     if (sig !== last) {
-      netlog(`relays Nostr ligados: ${open}/${total}`, open ? 'ok' : 'wn');
-      if (open) netlog('relays ativos: ' + urls.join(', '));
+      netlog(`relays Nostr: ${nostr.open}/${nostr.total}; MQTT: ${mqtt.open}/${mqtt.total}`,
+        nostr.open + mqtt.open ? 'ok' : 'wn');
+      if (nostr.open) netlog('Nostr ativos: ' + nostr.urls.join(', '));
+      if (mqtt.open) netlog('MQTT ativos: ' + mqtt.urls.join(', '));
       last = sig;
     }
-    if (open > 0) {
-      setStatus(isHost ? 'relay ligado — à espera do adversário…' : 'relay ligado — a procurar host…', 'warn');
+    if (nostr.open + mqtt.open > 0) {
+      setStatus(isHost ? 'relays ligados — à espera do adversário…' : 'relays ligados — a procurar host…', 'warn');
     } else {
       setStatus('a ligar aos relays…', 'warn');
     }
   }, 1000);
 }
 
-function handleJoinError(details) {
+function handleJoinError(details, strategy) {
+  if (peerConnected) return;
   const err = details?.error;
   const msg = err?.message || String(err || 'erro desconhecido');
-  lastJoinError = msg;
+  lastJoinError = `${strategy}: ${msg}`;
   const peer = details?.peerId ? ` peer=${details.peerId}` : '';
-  netlog(`falha WebRTC${peer}: ${msg}`, 'er');
+  netlog(`falha WebRTC via ${strategy}${peer}: ${msg}`, 'er');
   setStatus('falha de ligação WebRTC', 'err');
 }
 
@@ -806,35 +819,67 @@ function setupRoom(code, host) {
   isHost = host;
   roomCode = code;
 
-  netlog(`joinRoom: app=${APP_ID} sala=${roomCode}`);
-  room = joinRoom(ROOM_CONFIG, roomCode, { onJoinError: handleJoinError });
+  netlog(`joinRoom: app=${APP_ID} sala=${roomCode} (Nostr+MQTT)`);
+  for (const [strategy, join, config] of [
+    ['Nostr', joinRoom, ROOM_CONFIG],
+    ['MQTT', joinMqttRoom, MQTT_CONFIG],
+  ]) {
+    try {
+      const instance = join(config, roomCode, {
+        onJoinError: details => handleJoinError(details, strategy),
+      });
+      const record = {
+        strategy, room: instance, connected: false,
+        state: instance.makeAction('state'),
+        input: instance.makeAction('input'),
+      };
+      if (!record.state?.send || !('onMessage' in record.state) ||
+          !record.input?.send || !('onMessage' in record.input)) {
+        throw new Error('API Trystero inesperada');
+      }
+      roomRecords.push(record);
+      instance.onPeerJoin = peerId => {
+        record.connected = true;
+        netlog(`peer ligado via ${strategy}: ${peerId}`, 'ok');
+        if (peerConnected) return;
+        peerConnected = true;
+        clearTimeout(joinTimeout);
+        setStatus(isHost ? 'adversário ligado ✓' : 'ligado ao host ✓', 'ok');
+        btnSala.style.display = isHost ? '' : 'none';
+        startGame();
+      };
+      instance.onPeerLeave = peerId => {
+        record.connected = false;
+        netlog(`peer saiu via ${strategy}: ${peerId}`, 'wn');
+        if (roomRecords.some(item => item.connected)) return;
+        peerConnected = false;
+        setStatus('adversário saiu', 'warn');
+      };
+      netlog(`sala ${strategy} inicializada`, 'ok');
+    } catch (e) {
+      netlog(`falha a iniciar ${strategy}: ${e.message}`, 'er');
+    }
+  }
+  if (!roomRecords.length) throw new Error('Nenhuma rede de sinalização disponível');
   online = true;
-  netlog('sala inicializada localmente', 'ok');
-
-  stateAction = room.makeAction('state');
-  inputAction = room.makeAction('input');
-
-  if (!stateAction?.send || !('onMessage' in stateAction)) {
-    throw new Error('API Trystero inesperada em action "state"');
-  }
-  if (!inputAction?.send || !('onMessage' in inputAction)) {
-    throw new Error('API Trystero inesperada em action "input"');
-  }
-
-  room.onPeerJoin = (peerId) => {
-    peerConnected = true;
-    clearTimeout(joinTimeout);
-    netlog('peer ligado: ' + peerId, 'ok');
-    setStatus(isHost ? 'adversário ligado ✓' : 'ligado ao host ✓', 'ok');
-    btnSala.style.display = isHost ? '' : 'none';
-    startGame();
-  };
-
-  room.onPeerLeave = (peerId) => {
-    peerConnected = false;
-    netlog('peer saiu: ' + peerId, 'wn');
-    setStatus('adversário saiu', 'warn');
-  };
+  const combinedAction = key => ({
+    send(data) {
+      const active = roomRecords.filter(record => record.connected);
+      if (!active.length) return Promise.resolve();
+      return Promise.allSettled(active.map(record => record[key].send(data)))
+        .then(results => {
+          if (results.every(result => result.status === 'rejected')) {
+            throw results[0].reason;
+          }
+        });
+    },
+    set onMessage(handler) {
+      roomRecords.forEach(record => { record[key].onMessage = handler; });
+    },
+    get onMessage() { return null; },
+  });
+  stateAction = combinedAction('state');
+  inputAction = combinedAction('input');
 
   startRelayWatch();
 }
@@ -906,7 +951,10 @@ function joinRoomWithCode(code) {
 
     joinTimeout = setTimeout(() => {
       if (!peerConnected) {
-        const { total, open } = relaySummary();
+        const nostr = relaySummary(getRelaySockets);
+        const mqtt = relaySummary(getMqttRelaySockets);
+        const open = nostr.open + mqtt.open;
+        const total = nostr.total + mqtt.total;
         const detail = lastJoinError
           ? 'O host foi encontrado, mas a ligação WebRTC falhou. Consulta o log abaixo.'
           : open === 0
