@@ -492,7 +492,16 @@ const APP_ID = 'bola-pvp-simples-v1';
 const ROOM_CONFIG = {
   appId: APP_ID,
   trickleIce: true,
-  relayConfig: { redundancy: 3, warnOnRelayFailure: true },
+  relayConfig: {
+    urls: [
+      'wss://nos.lol',
+      'wss://nostr.data.haus',
+      'wss://relay.mostro.network',
+      'wss://nostr.sathoarder.com',
+      'wss://staging.yabu.me',
+    ],
+    warnOnRelayFailure: true,
+  },
 };
 
 let room = null;
@@ -595,8 +604,8 @@ function detectedTone(samples, sampleRate) {
     }
   }
   // Amplitude aproximada do tom; a margem rejeita fala e ruído ambiente.
-  return 2 * Math.sqrt(bestPower) / samples.length > 0.009 &&
-    bestPower > nextPower * 1.8 ? best : null;
+  return 2 * Math.sqrt(bestPower) / samples.length > 0.004 &&
+    bestPower > nextPower * 1.5 ? best : null;
 }
 
 async function listenForRoomCode() {
@@ -634,56 +643,84 @@ async function listenForRoomCode() {
     btn.disabled = false;
     btn.textContent = 'Parar de ouvir';
     hint.textContent = 'À escuta… toca em “Emitir” no outro telemóvel.';
-    let started = false, startVotes = 0, votes = [], quietFrames = 0, symbols = [];
+    const SYMBOL_PERIOD_MS = 460;
+    let started = false, startVotes = 0, firstTone = null;
+    let firstToneVotes = 0, firstSymbolAt = 0, currentSlot = 0;
+    let votes = [], symbols = [];
+    const resetPacket = (message) => {
+      started = false;
+      startVotes = 0;
+      firstTone = null;
+      firstToneVotes = 0;
+      firstSymbolAt = 0;
+      currentSlot = 0;
+      votes = [];
+      symbols = [];
+      hint.textContent = message;
+    };
     const finishSymbol = () => {
-      if (!votes.length) return;
       const counts = new Map();
       votes.forEach(n => counts.set(n, (counts.get(n) || 0) + 1));
-      const [value, count] = [...counts].sort((a, b) => b[1] - a[1])[0];
+      const [value, count] = [...counts].sort((a, b) => b[1] - a[1])[0] || [];
       votes = [];
-      if (count < 2) return;
-      symbols.push(value);
-      if (symbols.length !== 6) return;
-      const code = symbols.slice(0, 5).map(n => AUDIO_ALPHABET[n]).join('');
-      const valid = audioChecksum(code) === symbols[5];
-      symbols = [];
-      started = false;
-      if (valid) {
-        netlog('código recebido por áudio: ' + code, 'ok');
-        document.getElementById('roomInput').value = code;
-        stopAudioReceiver();
-        joinRoomWithCode(code);
-      } else {
-        hint.textContent = 'Som não reconhecido. Pede para emitir novamente.';
+      if (count < 2) {
+        netlog(`som incompleto no símbolo ${symbols.length + 1}/6`, 'wn');
+        resetPacket('Não consegui ouvir tudo. Pede para emitir novamente.');
+        return false;
       }
+      symbols.push(value);
+      hint.textContent = `A receber código… ${symbols.length}/6`;
+      if (symbols.length !== 6) return true;
+      const code = symbols.slice(0, 5).map(n => AUDIO_ALPHABET[n]).join('');
+      if (audioChecksum(code) !== symbols[5]) {
+        netlog('código áudio não passou na verificação', 'wn');
+        resetPacket('Código não reconhecido. Pede para emitir novamente.');
+        return false;
+      }
+      netlog('código recebido por áudio: ' + code, 'ok');
+      document.getElementById('roomInput').value = code;
+      stopAudioReceiver();
+      joinRoomWithCode(code);
+      return false;
     };
     receiver.timer = setInterval(() => {
       analyser.getFloatTimeDomainData(samples);
       const tone = detectedTone(samples, context.sampleRate);
+      const now = performance.now();
       if (!started) {
         startVotes = tone === -1 ? startVotes + 1 : 0;
         if (startVotes >= 3) {
           started = true;
-          symbols = [];
-          votes = [];
-          quietFrames = 0;
+          firstTone = null;
+          firstToneVotes = 0;
           hint.textContent = 'A receber código…';
         }
-      } else if (tone === -1) {
-        if (++startVotes >= 3 && symbols.length) {
-          // Um novo envio substitui um pacote que ficou incompleto.
-          symbols = [];
-          votes = [];
-          quietFrames = 0;
-          hint.textContent = 'A receber código…';
+        return;
+      }
+      if (!firstSymbolAt) {
+        if (tone === null || tone < 0) return;
+        firstToneVotes = tone === firstTone ? firstToneVotes + 1 : 1;
+        firstTone = tone;
+        if (firstToneVotes >= 2) {
+          firstSymbolAt = now;
+          votes.push(tone);
         }
-      } else if (tone !== null && tone >= 0) {
-        startVotes = 0;
+        return;
+      }
+      // Cada símbolo ocupa um intervalo conhecido. O fim do último é
+      // reconhecido pelo relógio, mesmo quando o microfone não fica silencioso.
+      const slot = Math.floor((now - firstSymbolAt + 50) / SYMBOL_PERIOD_MS);
+      while (currentSlot < slot && currentSlot < 6) {
+        if (!finishSymbol()) return;
+        currentSlot++;
+      }
+      if (slot >= 6) {
+        resetPacket('Código incompleto. Pede para emitir novamente.');
+        return;
+      }
+      if (tone !== null && tone >= 0 &&
+          now - firstSymbolAt - slot * SYMBOL_PERIOD_MS < 320) {
         votes.push(tone);
-        quietFrames = 0;
-      } else if (votes.length && ++quietFrames >= 2) {
-        finishSymbol();
-        quietFrames = 0;
       }
     }, 30);
   } catch (e) {
@@ -719,10 +756,11 @@ function relaySummary() {
   try {
     const sockets = getRelaySockets?.() || {};
     const entries = Object.entries(sockets);
-    const open = entries.filter(([, ws]) => ws?.readyState === WebSocket.OPEN).length;
-    return { total: entries.length, open };
+    const connected = entries.filter(([, ws]) => ws?.readyState === WebSocket.OPEN);
+    return { total: entries.length, open: connected.length,
+      urls: connected.map(([url]) => url) };
   } catch (_) {
-    return { total: 0, open: 0 };
+    return { total: 0, open: 0, urls: [] };
   }
 }
 
@@ -731,14 +769,15 @@ function startRelayWatch() {
   let last = '';
   relayWatchInterval = setInterval(() => {
     if (!room || peerConnected) return;
-    const { total, open } = relaySummary();
-    const sig = `${open}/${total}`;
+    const { total, open, urls } = relaySummary();
+    const sig = urls.join(',');
     if (sig !== last) {
       netlog(`relays Nostr ligados: ${open}/${total}`, open ? 'ok' : 'wn');
+      if (open) netlog('relays ativos: ' + urls.join(', '));
       last = sig;
     }
     if (open > 0) {
-      setStatus(isHost ? 'sala anunciada — à espera do adversário…' : 'relay ligado — a procurar host…', 'warn');
+      setStatus(isHost ? 'relay ligado — à espera do adversário…' : 'relay ligado — a procurar host…', 'warn');
     } else {
       setStatus('a ligar aos relays…', 'warn');
     }
@@ -862,10 +901,10 @@ function joinRoomWithCode(code) {
         const detail = open === 0
           ? 'Não foi possível contactar os relays de matchmaking.'
           : 'Os relays estão ligados, mas o host não foi encontrado. Confirma o código e que o host continua na sala.';
-        netlog(`timeout: nenhum peer após 20s (relays ${open}/${total})`, 'er');
+        netlog(`timeout: nenhum peer após 30s (relays ${open}/${total})`, 'er');
         showOverlayError(detail);
       }
-    }, 20000);
+    }, 30000);
 
     showOverlayJoining();
     setStatus('a ligar aos relays…', 'warn');
