@@ -13,9 +13,9 @@
     background: #0e1330;
     font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     user-select: none; -webkit-user-select: none;
-    touch-action: none;
+    touch-action: manipulation;
   }
-  canvas { display: block; }
+  canvas { display: block; touch-action:none; }
   #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
   #score {
     position: absolute; top: max(10px, env(safe-area-inset-top)); left: 50%;
@@ -72,6 +72,32 @@
     position: absolute; right: 14px; bottom: max(28px, calc(env(safe-area-inset-bottom) + 28px));
     display: flex; flex-direction: column; gap: 10px; align-items: flex-end;
   }
+  #bar .btn { padding: 9px 12px; font-size: 12px; }
+  #kickBox { position:absolute; bottom:max(22px, env(safe-area-inset-bottom)); left:50%; transform:translateX(-50%); width:128px; text-align:center; }
+  #kickPad { pointer-events:auto; touch-action:none; width:128px; height:94px; border:2px solid #bbf3ff; border-radius:26px; color:#08182b; font:800 17px system-ui; background:linear-gradient(145deg,#baf8ff,#35d0ff); box-shadow:0 6px 0 #13738a; }
+  #kickPad.charging { background:linear-gradient(145deg,#fff2ac,#ffb638); transform:scale(1.06); }
+  #kickPad:disabled { opacity:.45; }
+  .meter { height:6px; background:#16233a; border-radius:8px; overflow:hidden; margin-top:8px; }
+  .meter i { display:block; height:100%; width:0; background:#ffd166; }
+  #energyFill { background:#7dffb0; width:100%; }
+  #kickHint { color:#b9d0e8; font-size:10px; margin-top:6px; min-height:24px; }
+  #trainingInfo { position:absolute; top:104px; left:50%; transform:translateX(-50%); width:min(88vw,440px); text-align:center; font-size:12px; color:#dceaff; background:#0a173bcc; padding:8px; border-radius:12px; display:none; }
+  #trainingInfo button { pointer-events:auto; margin:5px; }
+  #settingsPanel { position:fixed; inset:0; z-index:40; background:#050b20d9; display:flex; justify-content:center; align-items:center; padding:16px; }
+  #settingsPanel[hidden] { display:none; }
+  .settingsCard { width:min(100%,520px); max-height:90dvh; overflow:auto; touch-action:pan-y; background:#111e3b; color:#dfedff; border:1px solid #355279; border-radius:20px; padding:20px; }
+  .settingsCard h2 { margin:0 0 8px; }
+  .settingsHeader { display:flex; align-items:center; justify-content:space-between; gap:12px; position:sticky; top:-20px; padding:12px 0; background:#111e3b; z-index:1; }
+  .settingsHeader h2 { font-size:21px; margin:0; }
+  .settingsHeader button { flex-shrink:0; }
+  .settingsCard p { font-size:13px; color:#a9c0df; }
+  .setting { display:grid; grid-template-columns:1fr auto; gap:6px; margin:16px 0; font-size:13px; }
+  .setting input { grid-column:1/-1; width:100%; accent-color:#35d0ff; touch-action:pan-x; }
+  .setting output { color:#9ee7ff; font-variant-numeric:tabular-nums; }
+  #overlay { overflow-y:auto; touch-action:pan-y; }
+  #overlayContent { display:flex; flex-direction:column; align-items:center; gap:14px; margin:auto; }
+  .trainingChoice { width:min(85vw,350px); }
+  @media(max-width:390px) { #stick { width:70px; height:70px; left:10px; } #bar {right:8px;gap:8px;} #kickBox,#kickPad {width:116px;} }
   .btn {
     pointer-events: auto;
     appearance: none; border: 0; cursor: pointer;
@@ -172,10 +198,25 @@
   <div id="stick"><div id="knob"></div><div class="lbl">inclinação</div></div>
   <div id="debug"></div>
   <div id="msg"></div>
+  <div id="trainingInfo"><span id="trainingText"></span><br><button class="btn" id="btnTrainingReset">Repetir</button><button class="btn alt" id="btnExercises">Exercícios</button></div>
+  <div id="kickBox" hidden>
+    <button id="kickPad" aria-label="Chutar: tocar para driblar, manter e largar para rematar">CHUTAR</button>
+    <div class="meter" aria-label="Carga"><i id="chargeFill"></i></div>
+    <div class="meter" aria-label="Energia"><i id="energyFill"></i></div>
+    <div id="kickHint">Toca ou mantém e larga</div>
+  </div>
   <div id="bar">
     <button class="btn" id="btnCal">Calibrar</button>
     <button class="btn alt" id="btnSala" style="display:none">Sala</button>
     <button class="btn alt" id="btnDbg">Debug</button>
+    <button class="btn" id="btnSettings">Afinar</button>
+    <button class="btn" id="btnMenu">Menu</button>
+  </div>
+</div>
+
+<div id="settingsPanel" hidden role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+  <div class="settingsCard"><div class="settingsHeader"><h2 id="settingsTitle">Afinar jogabilidade</h2><button class="btn" id="btnCloseSettings">Fechar</button></div><p id="settingsNote"></p><div id="settingsFields"></div>
+    <button class="btn alt" id="btnDefaults">Repor valores</button>
   </div>
 </div>
 
@@ -254,7 +295,7 @@ window.addEventListener('offline', () => netlog('navegador offline', 'er'));
    Utils / Constantes
    ============================================================ */
 const DEG = Math.PI / 180;
-const GAME_BUILD = '2026.10.12.2';
+const GAME_BUILD = '2026.10.13.1';
 const buildInfo = document.getElementById('buildInfo');
 buildInfo.textContent = 'Jogo ' + GAME_BUILD;
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -265,9 +306,33 @@ const HW = FIELD_W / 2, HL = FIELD_L / 2;
 const GOAL_W = 5, GOAL_D = 2.2;
 const WALL_T = 0.5, WALL_H = 1.5;
 const BALL_R = 0.7;
+const FOOTBALL_R = 0.43;
+const SETTING_SPECS = [
+  ['response','Resposta do jogador',2,25,.5,9,''],
+  ['speed','Velocidade máxima',3,14,.5,8,'m/s'],
+  ['playerMass','Peso do jogador',.5,6,.1,2,'kg'],
+  ['ballMass','Peso da bola',.15,2,.05,.45,'kg'],
+  ['bounce','Ressalto da bola',0,.95,.05,.55,''],
+  ['drag','Atrito de rolamento',0,.8,.02,.18,''],
+  ['kickForce','Força do remate',2,14,.5,7,'N·s'],
+  ['reach','Alcance extra do chute',.1,1.5,.1,.5,'m'],
+  ['chargeTime','Tempo de carga',.3,2,.1,1.1,'s'],
+  ['cooldown','Recuperação entre chutes',.15,1.5,.05,.4,'s'],
+  ['fatigue','Custo do remate máximo',10,60,2,34,'%'],
+  ['recovery','Recuperação de energia',4,35,1,16,'%/s'],
+  ['sensitivity','Sensibilidade à inclinação',.5,2,.1,1,'×'],
+];
+const defaults = Object.fromEntries(SETTING_SPECS.map(spec => [spec[0],spec[5]]));
+let savedSettings = {};
+try { savedSettings = JSON.parse(localStorage.getItem('giro-settings') || '{}'); } catch (_) {}
+let settings = sanitizeSettings(savedSettings);
+let personalSettings = {...settings};
+let settingsRevision = 0, remoteSettingsRevision = -1;
+function sanitizeSettings(values) {
+  return Object.fromEntries(SETTING_SPECS.map(([key,,min,max,,value]) =>
+    [key, Number.isFinite(values?.[key]) ? clamp(values[key],min,max) : value]));
+}
 
-const MAX_SPEED = 9;
-const SERVO_K   = 7;
 const MAX_TILT  = 0.45;
 const DEADZONE  = 0.03;
 
@@ -330,6 +395,12 @@ world.allowSleep = false;
 const matGround = new CANNON.Material('ground');
 const matWall   = new CANNON.Material('wall');
 const matBall   = new CANNON.Material('ball');
+const matFootball = new CANNON.Material('football');
+const footballContacts = [matGround,matWall,matBall].map(material => {
+  const contact = new CANNON.ContactMaterial(matFootball,material,{friction:.18,restitution:settings.bounce});
+  world.addContactMaterial(contact);
+  return contact;
+});
 world.addContactMaterial(new CANNON.ContactMaterial(matBall, matGround, { friction: 0.28, restitution: 0.40 }));
 world.addContactMaterial(new CANNON.ContactMaterial(matBall, matWall,   { friction: 0.05, restitution: 0.80 }));
 world.addContactMaterial(new CANNON.ContactMaterial(matBall, matBall,   { friction: 0.02, restitution: 0.95 }));
@@ -379,35 +450,43 @@ for (const s of [-1, 1]) {
   scene.add(m);
 }
 
-function makeBall(color, emissive, x, z) {
+function makeBall(color, emissive, x, z, radius = BALL_R, material = matBall) {
   const body = new CANNON.Body({
     mass: 1,
-    shape: new CANNON.Sphere(BALL_R),
-    position: new CANNON.Vec3(x, BALL_R, z),
-    material: matBall, linearDamping: 0, angularDamping: 0.22,
+    shape: new CANNON.Sphere(radius),
+    position: new CANNON.Vec3(x, radius, z),
+    material, linearDamping: 0, angularDamping: 0.22,
   });
   world.addBody(body);
   const group = new THREE.Group();
   const sphere = new THREE.Mesh(
-    new THREE.SphereGeometry(BALL_R, 32, 24),
+    new THREE.SphereGeometry(radius, 32, 24),
     new THREE.MeshStandardMaterial({ color, emissive, emissiveIntensity: 0.55, roughness: 0.32 })
   );
   sphere.castShadow = true;
   group.add(sphere);
   const band = new THREE.Mesh(
-    new THREE.TorusGeometry(BALL_R * 1.004, 0.055, 8, 48),
+    new THREE.TorusGeometry(radius * 1.004, 0.04, 8, 48),
     new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.35 })
   );
   band.rotation.y = Math.PI/2;
   group.add(band);
   scene.add(group);
-  return { body, group };
+  return { body, group, radius };
 }
 const ballA = makeBall(0x35d0ff, 0x0a6a92, 0, -5);
 const ballB = makeBall(0xff4d6d, 0x8a0f28, 0,  5);
+const football = makeBall(0xffffff, 0x303b4b, 0, 0, FOOTBALL_R, matFootball);
+football.group.children[1].material.color.set(0x142237);
+football.group.children[1].material.emissive.set(0x000000);
+const secondBand = football.group.children[1].clone();
+secondBand.rotation.set(Math.PI/2,0,0);
+football.group.add(secondBand);
+const actors = [['a',ballA],['b',ballB],['f',football]];
 const guestTargets = {
   a: { position: new THREE.Vector3(), quaternion: new THREE.Quaternion() },
   b: { position: new THREE.Vector3(), quaternion: new THREE.Quaternion() },
+  f: { position: new THREE.Vector3(), quaternion: new THREE.Quaternion() },
 };
 let guestHasState = false;
 let guestResetGeneration = null;
@@ -421,8 +500,18 @@ function ballSnapshot(ball) {
 
 function applyGuestState(data) {
   if (!checkPeerBuild(data)) return;
-  if (!data?.a || !data?.b || !Number.isFinite(data.t)) return;
-  for (const key of ['a', 'b']) {
+  if (!data?.a || !data?.b || !data?.f || !Number.isFinite(data.t)) return;
+  if (data.cfg && data.cfgRev !== remoteSettingsRevision) {
+    remoteSettingsRevision = data.cfgRev;
+    settings = sanitizeSettings(data.cfg);
+    applySettings();
+    if (!document.getElementById('settingsPanel').hidden) renderSettings();
+  }
+  if (data.k) {
+    for (let i=0;i<2;i++) Object.assign(kicks[i],data.k[i],{held:!!data.k[i].held});
+  }
+  guestPhase=data.phase;
+  for (const [key] of actors) {
     const remote = data[key];
     if (![remote.x, remote.z].every(Number.isFinite)) return;
     guestTargets[key].position.set(remote.x,
@@ -433,10 +522,10 @@ function applyGuestState(data) {
   }
   if (!guestHasState || data.r !== guestResetGeneration) {
     guestFrames.length = 0;
-    ballA.group.position.copy(guestTargets.a.position);
-    ballA.group.quaternion.copy(guestTargets.a.quaternion);
-    ballB.group.position.copy(guestTargets.b.position);
-    ballB.group.quaternion.copy(guestTargets.b.quaternion);
+    for (const [key,ball] of actors) {
+      ball.group.position.copy(guestTargets[key].position);
+      ball.group.quaternion.copy(guestTargets[key].quaternion);
+    }
   }
   guestHasState = true;
   guestResetGeneration = data.r;
@@ -446,6 +535,7 @@ function applyGuestState(data) {
     t: data.t,
     a: { position: guestTargets.a.position.clone(), quaternion: guestTargets.a.quaternion.clone() },
     b: { position: guestTargets.b.position.clone(), quaternion: guestTargets.b.quaternion.clone() },
+    f: { position: guestTargets.f.position.clone(), quaternion: guestTargets.f.quaternion.clone() },
   });
   if (guestFrames.length > 12) guestFrames.shift();
 
@@ -465,7 +555,7 @@ function renderGuest(now) {
   const from = guestFrames[0];
   const to = guestFrames[1] || from;
   const blend = to.t > from.t ? clamp((renderTime - from.t) / (to.t - from.t), 0, 1) : 1;
-  for (const [key, ball] of [['a', ballA], ['b', ballB]]) {
+  for (const [key, ball] of actors) {
     ball.group.position.lerpVectors(from[key].position, to[key].position, blend);
     ball.group.quaternion.slerpQuaternions(from[key].quaternion, to[key].quaternion, blend);
   }
@@ -537,8 +627,8 @@ const input = { x: 0, y: 0 };
 function updateInput(dt) {
   let ix = 0, iy = 0;
   if (sensor.ok && sensor.calibrated) {
-    const dx = INVERT_X * (sensor.gx - sensor.baseX) / 9.81 / MAX_TILT;
-    const dy = INVERT_Y * (sensor.gy - sensor.baseY) / 9.81 / MAX_TILT;
+    const dx = settings.sensitivity * INVERT_X * (sensor.gx - sensor.baseX) / 9.81 / MAX_TILT;
+    const dy = settings.sensitivity * INVERT_Y * (sensor.gy - sensor.baseY) / 9.81 / MAX_TILT;
     const mag = Math.hypot(dx, dy);
     if (mag > DEADZONE) {
       const s = Math.min(1, (mag - DEADZONE) / (1 - DEADZONE)) / mag;
@@ -555,15 +645,9 @@ function updateInput(dt) {
    Física e IA
    ============================================================ */
 function servo(body, ix, iy, dt) {
-  const k = 1 - Math.exp(-SERVO_K * dt);
-  body.velocity.x = lerp(body.velocity.x, ix * MAX_SPEED, k);
-  body.velocity.z = lerp(body.velocity.z, iy * MAX_SPEED, k);
-}
-function aiControl(dt) {
-  const dx = ballA.body.position.x - ballB.body.position.x;
-  const dz = ballA.body.position.z - ballB.body.position.z;
-  const d = Math.hypot(dx, dz) || 1;
-  servo(ballB.body, (dx / d) * 0.72, (dz / d) * 0.72, dt);
+  const k = 1 - Math.exp(-settings.response * dt / Math.sqrt(settings.playerMass));
+  body.velocity.x = lerp(body.velocity.x, ix * settings.speed, k);
+  body.velocity.z = lerp(body.velocity.z, iy * settings.speed, k);
 }
 
 /* ============================================================
@@ -577,22 +661,26 @@ let resetTimer = 0;
 let resetGeneration = 0;
 let kickoffTimer = 0;
 let gameRunning = false;
+let training = null;
+let guestPhase = 'ready';
 function showMsg(text, color) {
   msgEl.textContent = text; msgEl.style.color = color; msgEl.style.opacity = '1';
   setTimeout(() => { msgEl.style.opacity = '0'; }, 950);
 }
 function resetPositions() {
   const set = (b, x, z) => {
-    b.body.position.set(x, BALL_R, z);
+    b.body.position.set(x, b.radius, z);
     b.body.velocity.setZero();
     b.body.angularVelocity.setZero();
     b.body.quaternion.set(0, 0, 0, 1);
   };
   set(ballA, 0, -5); set(ballB, 0, 5);
-  ballA.group.position.copy(ballA.body.position);
-  ballA.group.quaternion.copy(ballA.body.quaternion);
-  ballB.group.position.copy(ballB.body.position);
-  ballB.group.quaternion.copy(ballB.body.quaternion);
+  set(football,0,0);
+  for (const [,ball] of actors) {
+    ball.group.position.copy(ball.body.position);
+    ball.group.quaternion.copy(ball.body.quaternion);
+  }
+  resetKicks();
   resetGeneration++;
   kickoffTimer = 1;
 }
@@ -603,20 +691,207 @@ function resetMatch() {
   resetPositions();
 }
 function checkGoal() {
-  for (const ball of [ballA, ballB]) {
-    const p = ball.body.position;
-    if (Math.abs(p.x) > GOAL_W / 2) continue;
-    if (p.z > HL + 0.7) {
+    const p = football.body.position;
+    if (Math.abs(p.x) > GOAL_W / 2 - FOOTBALL_R || p.y > WALL_H + FOOTBALL_R) return;
+    if (training && training.mode !== 'free') {
+      if (Math.abs(p.z) > HL + FOOTBALL_R) trainingGoal(p);
+      return;
+    }
+    if (p.z > HL + FOOTBALL_R) {
       score[0]++; s0El.textContent = score[0];
       showMsg('GOLO! 🔵', '#35d0ff'); resetTimer = 1.4;
       return;
     }
-    if (p.z < -(HL + 0.7)) {
+    if (p.z < -(HL + FOOTBALL_R)) {
       score[1]++; s1El.textContent = score[1];
       showMsg('GOLO! 🔴', '#ff4d6d'); resetTimer = 1.4;
       return;
     }
+}
+
+/* Chute e afinação: toda a física é decidida pelo host (ou pelo treino local). */
+const kicks = [0,1].map(() => ({energy:100,cooldown:0,held:false,charge:0,burst:0,startAt:0,rest:0}));
+let localKickHeld = false, kickSequence = 0, remoteKickSequence = -1, kickPointer = null;
+const kickPad = document.getElementById('kickPad');
+function resetKicks() {
+  localKickHeld = false; kickPointer=null;
+  for (const k of kicks) Object.assign(k,{energy:100,cooldown:0,held:false,charge:0,burst:0,rest:0});
+  for (const player of [ballA,ballB]) inflatePlayer(player,1);
+}
+function canPlay() {
+  return gameRunning && (training || peerConnected) && document.getElementById('settingsPanel').hidden &&
+    (isHost ? resetTimer<=0 && kickoffTimer<=0 : guestPhase==='play');
+}
+function inflatePlayer(player,scale) {
+  player.group.scale.setScalar(scale);
+  const shape = player.body.shapes[0];
+  const radius = BALL_R*scale;
+  if (isHost && Math.abs(shape.radius-radius)>.005) {
+    shape.radius=radius; shape.updateBoundingSphereRadius();
+    player.body.updateBoundingRadius(); player.body.updateMassProperties(); player.body.aabbNeedsUpdate=true;
   }
+}
+function kickImpulse(index, strength) {
+  const player = index===0?ballA:ballB;
+  const dx=football.body.position.x-player.body.position.x;
+  const dz=football.body.position.z-player.body.position.z;
+  const distance=Math.hypot(dx,dz);
+  if (distance > BALL_R*player.group.scale.x+FOOTBALL_R+settings.reach ||
+      Math.abs(football.body.position.y-player.body.position.y)>1.6) return;
+  const ux=distance>.01?dx/distance:0, uz=distance>.01?dz/distance:(index===0?1:-1);
+  const impulse=settings.kickForce*strength;
+  football.body.wakeUp();
+  football.body.applyImpulse(new CANNON.Vec3(ux*impulse,impulse*.08*strength,uz*impulse));
+  if (football.body.velocity.length()>35) football.body.velocity.scale(35/football.body.velocity.length(),football.body.velocity);
+}
+function kickEvent(index,action) {
+  const k=kicks[index];
+  if (action==='cancel') { k.held=false; k.charge=0; k.cooldown=Math.max(k.cooldown,settings.cooldown); return; }
+  if (!gameRunning || resetTimer>0 || kickoffTimer>0 || (!training && !peerConnected)) return;
+  if (action==='down') {
+    if (k.held || k.cooldown>0 || k.energy<6) return;
+    k.held=true; k.startAt=performance.now(); k.charge=0; k.burst=.15; k.rest=.7;
+    k.energy=Math.max(0,k.energy-6);
+    inflatePlayer(index===0?ballA:ballB,1.14);
+  } else if (action==='up' && k.held) {
+    const charge=clamp((performance.now()-k.startAt)/1000/settings.chargeTime,0,1);
+    k.held=false; k.charge=0;
+    const power=charge>.12?charge:0;
+    const cost=(settings.fatigue-6)*power;
+    const available=Math.min(1,k.energy/Math.max(cost,1));
+    kickImpulse(index,(.18+.82*power)*(.35+.65*k.energy/100)*available);
+    k.energy=Math.max(0,k.energy-cost); k.burst=.15+.13*power;
+    k.cooldown=settings.cooldown*(1+.6*charge); k.rest=.8;
+  }
+}
+function sendKick(action) {
+  if (isHost) kickEvent(0,action);
+  else if (kickAction && peerConnected) kickAction.send({v:GAME_BUILD,action,id:++kickSequence})
+    .catch(e=>netlog('erro no chute: '+e.message,'er'));
+}
+function beginLocalKick() {
+  if (localKickHeld || !canPlay()) return;
+  const k=kicks[isHost?0:1];
+  if(k.cooldown>0 || k.energy<6) return;
+  localKickHeld=true; sendKick('down');
+}
+function endLocalKick(cancel=false) {
+  if (!localKickHeld) return;
+  localKickHeld=false; sendKick(cancel?'cancel':'up');
+}
+function updateKicks(dt) {
+  if (isHost) for (const k of kicks) {
+    k.cooldown=Math.max(0,k.cooldown-dt); k.burst=Math.max(0,k.burst-dt); k.rest=Math.max(0,k.rest-dt);
+    if(k.held) k.charge=clamp((performance.now()-k.startAt)/1000/settings.chargeTime,0,1);
+    else if(k.rest===0) k.energy=Math.min(100,k.energy+settings.recovery*dt);
+  }
+  [ballA,ballB].forEach((player,i)=>{
+    const k=kicks[i]; inflatePlayer(player,1+(k.held ? .14+.26*k.charge : 0)+k.burst*.7);
+  });
+  const k=kicks[isHost?0:1];
+  kickPad.classList.toggle('charging',k.held || localKickHeld);
+  kickPad.disabled=!gameRunning || (!localKickHeld && (!canPlay() || k.cooldown>0 || k.energy<6));
+  kickPad.textContent=k.held?'LARGA!':k.cooldown>0?'A RECUPERAR':'CHUTAR';
+  document.getElementById('chargeFill').style.width=(k.charge*100)+'%';
+  document.getElementById('energyFill').style.width=k.energy+'%';
+  document.getElementById('kickHint').textContent=`Energia ${Math.round(k.energy)}% · ${k.cooldown>0?k.cooldown.toFixed(1)+' s':'toca ou mantém e larga'}`;
+}
+function applySettings() {
+  for(const player of [ballA,ballB]) { player.body.mass=settings.playerMass; player.body.updateMassProperties(); }
+  football.body.mass=settings.ballMass; football.body.updateMassProperties();
+  football.body.linearDamping=settings.drag;
+  footballContacts.forEach(c=>c.restitution=settings.bounce);
+}
+function renderSettings() {
+  const locked=online && !isHost;
+  document.getElementById('settingsNote').textContent=locked?'Nesta sala, o host define a física para os dois jogadores.':'Aplica imediatamente. Os valores ficam guardados neste dispositivo e são partilhados com o convidado.';
+  document.getElementById('settingsFields').innerHTML=SETTING_SPECS.map(([key,label,min,max,step,,unit])=>
+    `<label class="setting" for="setting-${key}">${label}<output id="value-${key}">${settings[key]} ${unit}</output><input id="setting-${key}" data-setting="${key}" type="range" min="${min}" max="${max}" step="${step}" value="${settings[key]}" ${locked?'disabled':''}></label>`).join('');
+  document.getElementById('btnDefaults').disabled=locked;
+}
+function saveSettings() {
+  personalSettings={...settings}; settingsRevision++; applySettings();
+  try { localStorage.setItem('giro-settings',JSON.stringify(settings)); } catch (_) {}
+}
+function openSettings() { endLocalKick(true); document.getElementById('settingsPanel').hidden=false; renderSettings(); }
+
+/* Treino: caminhos no chão, condução com a bola e alvos na baliza. */
+const trainingMarkers = new THREE.Group(); scene.add(trainingMarkers);
+const courses={
+  line:{name:'Segue a linha',hint:'Guia o jogador pelos círculos, pela ordem indicada.',points:[[0,-5],[-3,-2],[3,1],[-3,4],[0,7]]},
+  dribble:{name:'Condução',hint:'Leva a bola branca pelos círculos. Usa toques curtos.',points:[[0,-2],[-2,1],[2,4],[0,7]]},
+  aim:{name:'Pontaria',hint:'Remata a bola branca para o alvo amarelo. Acerta em 5 alvos.'},
+  free:{name:'Treino livre',hint:'Experimenta a condução, os remates e as definições.'},
+};
+function clearTrainingMarkers() {
+  for(const object of [...trainingMarkers.children]) { object.geometry.dispose(); object.material.dispose(); trainingMarkers.remove(object); }
+}
+function drawTraining() {
+  clearTrainingMarkers();
+  if(!training) return;
+  const course=courses[training.mode];
+  const points=course.points;
+  if(points) {
+    const geometry=new THREE.BufferGeometry().setFromPoints(points.map(([x,z])=>new THREE.Vector3(x,.035,z)));
+    trainingMarkers.add(new THREE.Line(geometry,new THREE.LineBasicMaterial({color:0xffed9e})));
+    points.forEach(([x,z],i)=>{
+      const ring=new THREE.Mesh(new THREE.RingGeometry(.55,.68,40),new THREE.MeshBasicMaterial({color:i<training.index?0x7dffb0:i===training.index?0xffd166:0x8db4c2,side:THREE.DoubleSide}));
+      ring.rotation.x=-Math.PI/2;ring.position.set(x,.04,z);trainingMarkers.add(ring);
+    });
+  } else if(training.mode==='aim') {
+    const target=new THREE.Mesh(new THREE.RingGeometry(.5,.7,40),new THREE.MeshBasicMaterial({color:0xffd166,side:THREE.DoubleSide}));
+    target.position.set(training.targetX,.7,HL+.1); trainingMarkers.add(target);
+  }
+}
+function prepareTrainingAttempt() {
+  resetTimer=0; resetPositions();
+  if(training.mode==='aim') {
+    training.targetX=[-1.5,0,1.5,0,-1.5][training.hits%5];
+    football.body.position.set(0,FOOTBALL_R,2);
+    ballA.body.position.set(0,BALL_R,.4);
+  } else if(training.mode==='dribble') football.body.position.set(0,FOOTBALL_R,-3.6);
+  else if(training.mode==='line') football.body.position.set(4,FOOTBALL_R,0);
+  drawTraining();
+}
+function startTraining(mode) {
+  cleanupRoom(); isHost=true; roomCode='';
+  training={mode,index:0,hits:0,attempts:0,elapsed:0,complete:false,targetX:0};
+  ballB.group.visible=false;ballB.body.collisionFilterMask=0;
+  world.removeBody(ballB.body);
+  document.getElementById('trainingInfo').style.display='block';
+  buildInfo.textContent=`Jogo ${GAME_BUILD} · Treino 🔵`;
+  resetMatch();prepareTrainingAttempt();updateTraining(0);startGame();setStatus(courses[mode].name,'ok');
+}
+function updateTraining(dt) {
+  if(!training) return;
+  const course=courses[training.mode];
+  if(!training.complete) training.elapsed+=dt;
+  if(course.points && !training.complete) {
+    const pos=(training.mode==='line'?ballA:football).body.position;
+    const [x,z]=course.points[training.index];
+    if(Math.hypot(pos.x-x,pos.z-z)<.75) {
+      training.index++;drawTraining();
+      if(training.index===course.points.length) { training.complete=true;showMsg('CONCLUÍDO!','#7dffb0'); }
+    }
+  }
+  const progress=course.points?`${training.index}/${course.points.length} círculos`:training.mode==='aim'?`${training.hits}/5 alvos · ${training.attempts} remates à baliza`:'';
+  document.getElementById('trainingText').textContent=`${course.name} · ${training.elapsed.toFixed(1)} s — ${training.complete?'Concluído! Repete ou escolhe outro exercício.':course.hint} ${progress}`;
+}
+function trainingGoal(p) {
+  if(training.mode==='aim' && !training.complete) {
+    training.attempts++;
+    const hit=p.z>0 && Math.abs(p.x-training.targetX)<.7;
+    if(hit) training.hits++;
+    training.complete=training.hits>=5;
+    showMsg(training.complete?'CONCLUÍDO!':hit?'NO ALVO!':'TENTA OUTRA VEZ',hit?'#7dffb0':'#ffd166');
+  }
+  resetTimer=1.2;
+}
+function showTrainingMenu() {
+  cleanupRoom();overlay.classList.remove('hidden');
+  overlayContent.innerHTML=`<h1>Sala de treino</h1><p>Treina a solo. Abre “Afinar” a qualquer momento.</p>${Object.entries(courses).map(([id,c])=>`<button class="btn trainingChoice" data-course="${id}">${c.name}</button>`).join('')}<button class="btn alt" id="btnTrainingBack">Voltar</button>`;
+  overlayContent.querySelectorAll('[data-course]').forEach(btn=>btn.onclick=()=>startTraining(btn.dataset.course));
+  document.getElementById('btnTrainingBack').onclick=showOverlayMenu;
 }
 
 /* ============================================================
@@ -718,6 +993,7 @@ let roomCode = '';
 
 let stateAction = null;
 let inputAction = null;
+let kickAction = null;
 let stateInterval = null;
 let inputInterval = null;
 let relayWatchInterval = null;
@@ -953,6 +1229,7 @@ async function listenForRoomCode() {
 const btnSala = document.getElementById('btnSala');
 
 function cleanupRoom() {
+  endLocalKick(true);
   stopAudioReceiver();
   clearInterval(stateInterval);
   clearInterval(inputInterval);
@@ -965,8 +1242,17 @@ function cleanupRoom() {
   room = null;
   stateAction = null;
   inputAction = null;
+  kickAction = null;
   online = false;
   gameRunning = false;
+  training=null; clearTrainingMarkers();
+  ballB.group.visible=true;ballB.body.collisionFilterMask=-1;
+  if(!world.bodies.includes(ballB.body))world.addBody(ballB.body);
+  document.getElementById('trainingInfo').style.display='none';
+  document.getElementById('kickBox').hidden=true;
+  document.getElementById('settingsPanel').hidden=true;
+  settings={...personalSettings};applySettings();remoteSettingsRevision=-1;
+  resetKicks(); guestPhase='ready';
   peerConnected = false;
   remoteInput.x = remoteInput.y = 0;
   guestHasState = false;
@@ -1045,6 +1331,13 @@ function setupRoom(code, host) {
 
   stateAction = room.makeAction('state');
   inputAction = room.makeAction('input');
+  kickAction = room.makeAction('kick');
+  remoteKickSequence=-1; kickSequence=0;
+  kickAction.onMessage=(data)=>{
+    if(!isHost || !checkPeerBuild(data) || !Number.isSafeInteger(data.id) || data.id<=remoteKickSequence) return;
+    remoteKickSequence=data.id;
+    if(['down','up','cancel'].includes(data.action)) kickEvent(1,data.action);
+  };
 
   if (!stateAction?.send || !('onMessage' in stateAction)) {
     throw new Error('API Trystero inesperada em action "state"');
@@ -1064,6 +1357,7 @@ function setupRoom(code, host) {
   };
 
   room.onPeerLeave = (peerId) => {
+    endLocalKick(true);resetKicks();
     peerConnected = false;
     netlog('peer saiu: ' + peerId, 'wn');
     setStatus('adversário saiu', 'warn');
@@ -1094,6 +1388,10 @@ function createRoom() {
         t: performance.now(),
         a: ballSnapshot(ballA),
         b: ballSnapshot(ballB),
+        f: ballSnapshot(football),
+        k: kicks.map(({energy,cooldown,held,charge,burst})=>({energy,cooldown,held,charge,burst})),
+        cfg: settings, cfgRev:settingsRevision,
+        phase:resetTimer>0?'goal':kickoffTimer>0?'ready':'play',
         s: [score[0], score[1]],
         r: resetGeneration,
       }).catch(e => netlog('erro a enviar state: ' + e.message, 'er'));
@@ -1149,6 +1447,7 @@ function joinRoomWithCode(code) {
 
 function startGame() {
   gameRunning = true;
+  document.getElementById('kickBox').hidden=false;
   document.getElementById('overlay').classList.add('hidden');
   setStatus('jogo a correr', 'ok');
   netlog('jogo iniciado', 'ok');
@@ -1181,7 +1480,7 @@ function showOverlayStart() {
   overlay.classList.remove('hidden');
   overlayContent.innerHTML = `
     <h1>⚽ Bola PvP</h1>
-    <p>Segura o telemóvel à frente e inclina-o para mover a tua bola.</p>
+    <p>Inclina o telemóvel para guiar o jogador. Toca para driblar; mantém e larga para rematar a bola branca.</p>
     <button class="btn" id="btnStart">ATIVAR SENSORES</button>
     <div id="netlog"></div>
   `;
@@ -1196,16 +1495,20 @@ function showOverlayMenu() {
   overlay.classList.remove('hidden');
   overlayContent.innerHTML = `
     <h1>⚽ Bola PvP</h1>
-    <p>Escolhe como queres jogar:</p>
+    <p>Marca na baliza adversária com a bola branca. Joga a dois ou afina a tua técnica no treino.</p>
     <div class="row">
       <button class="btn" id="btnCreate">Criar sala</button>
       <button class="btn alt" id="btnJoin">Entrar em sala</button>
+      <button class="btn" id="btnTraining">Treino a solo</button>
+      <button class="btn alt" id="btnMenuSettings">Afinar jogabilidade</button>
     </div>
     <div id="netlog"></div>
   `;
   attachNetlog();
   document.getElementById('btnCreate').addEventListener('click', createRoom);
   document.getElementById('btnJoin').addEventListener('click', showOverlayJoinInput);
+  document.getElementById('btnTraining').addEventListener('click', showTrainingMenu);
+  document.getElementById('btnMenuSettings').addEventListener('click', openSettings);
   netlog('menu pronto');
 }
 
@@ -1225,7 +1528,6 @@ function showOverlayJoinInput() {
   `;
   attachNetlog();
   const inp = document.getElementById('roomInput');
-  inp.focus();
   document.getElementById('btnDoJoin').addEventListener('click', () => {
     const code = inp.value.trim().toUpperCase();
     if (code.length < 4) { showOverlayError('Código inválido.'); return; }
@@ -1235,6 +1537,7 @@ function showOverlayJoinInput() {
   document.getElementById('btnListen').addEventListener('click', listenForRoomCode);
   document.getElementById('btnBack').addEventListener('click', showOverlayMenu);
   netlog('à espera do código');
+  listenForRoomCode();
 }
 
 function showOverlayHostWaiting(code) {
@@ -1364,31 +1667,33 @@ function tick(now) {
   last = now;
 
   updateInput(dt);
+  if (!document.getElementById('settingsPanel').hidden) input.x=input.y=0;
+  const paused=training && !document.getElementById('settingsPanel').hidden;
+  updateKicks(paused?0:dt);
 
-  if (gameRunning && isHost && resetTimer > 0) {
+  if (!paused && gameRunning && isHost && resetTimer > 0) {
     resetTimer -= dt;
-    ballA.body.velocity.setZero();
-    ballB.body.velocity.setZero();
-    if (resetTimer <= 0) resetPositions();
-  } else if (gameRunning && isHost && kickoffTimer > 0) {
+    for (const [,ball] of actors) ball.body.velocity.setZero();
+    if (resetTimer <= 0) { if(training) prepareTrainingAttempt(); else resetPositions(); }
+  } else if (!paused && gameRunning && isHost && kickoffTimer > 0) {
     kickoffTimer = Math.max(0, kickoffTimer - dt);
-  } else if (gameRunning && isHost && peerConnected) {
+  } else if (!paused && gameRunning && isHost && (peerConnected || training)) {
     servo(ballA.body, input.x, input.y, dt);
     if (online) servo(ballB.body, remoteInput.x, remoteInput.y, dt);
-    else aiControl(dt);
-    world.step(1/60, dt, 3);
-    if (ballA.body.position.y < -5 || ballB.body.position.y < -5) resetPositions();
+    world.step(1/120, dt, 8);
+    if (actors.some(([,ball])=>ball.body.position.y < -5)) { if(training) prepareTrainingAttempt(); else resetPositions(); }
     else checkGoal();
+    if(training) updateTraining(dt);
   } else if (isHost) {
     ballA.body.velocity.setZero();
     ballB.body.velocity.setZero();
   }
 
   if (isHost || !online) {
-    ballA.group.position.copy(ballA.body.position);
-    ballA.group.quaternion.copy(ballA.body.quaternion);
-    ballB.group.position.copy(ballB.body.position);
-    ballB.group.quaternion.copy(ballB.body.quaternion);
+    for (const [,ball] of actors) {
+      ball.group.position.copy(ball.body.position);
+      ball.group.quaternion.copy(ball.body.quaternion);
+    }
   } else if (guestHasState) {
     renderGuest(now);
   }
@@ -1426,6 +1731,33 @@ document.getElementById('btnDbg').addEventListener('click', (e) => {
   e.currentTarget.style.opacity = debugOn ? '1' : '0.65';
 });
 
+kickPad.addEventListener('pointerdown',e=>{
+  if(e.button!==0 || kickPointer!==null || localKickHeld) return;
+  e.preventDefault();beginLocalKick();
+  if(localKickHeld){kickPointer=e.pointerId;kickPad.setPointerCapture(e.pointerId);}
+});
+kickPad.addEventListener('pointerup',e=>{if(e.pointerId===kickPointer){kickPointer=null;endLocalKick();}});
+kickPad.addEventListener('pointercancel',e=>{if(e.pointerId===kickPointer){kickPointer=null;endLocalKick(true);}});
+kickPad.addEventListener('lostpointercapture',e=>{if(e.pointerId===kickPointer){kickPointer=null;endLocalKick(true);}});
+kickPad.addEventListener('contextmenu',e=>e.preventDefault());
+kickPad.addEventListener('keydown',e=>{if(e.code==='Space'&&!e.repeat){e.preventDefault();beginLocalKick();}});
+kickPad.addEventListener('keyup',e=>{if(e.code==='Space'){e.preventDefault();endLocalKick();}});
+window.addEventListener('blur',()=>endLocalKick(true));
+document.addEventListener('visibilitychange',()=>{if(document.hidden)endLocalKick(true);});
+document.getElementById('btnSettings').onclick=openSettings;
+document.getElementById('btnCloseSettings').onclick=()=>document.getElementById('settingsPanel').hidden=true;
+document.getElementById('btnDefaults').onclick=()=>{if(online&&!isHost)return;settings={...defaults};saveSettings();renderSettings();};
+document.getElementById('settingsFields').addEventListener('input',e=>{
+  const key=e.target.dataset.setting;
+  if(!key || (online&&!isHost))return;
+  settings=sanitizeSettings({...settings,[key]:Number(e.target.value)});saveSettings();
+  const spec=SETTING_SPECS.find(s=>s[0]===key);
+  document.getElementById('value-'+key).textContent=settings[key]+' '+spec[6];
+});
+document.getElementById('btnMenu').onclick=()=>{cleanupRoom();showOverlayMenu();};
+document.getElementById('btnTrainingReset').onclick=()=>{if(training)startTraining(training.mode);};
+document.getElementById('btnExercises').onclick=showTrainingMenu;
+
 btnSala.addEventListener('click', () => {
   if (roomCode) {
     navigator.clipboard?.writeText(roomCode).then(() => showMsg('Código copiado!', '#9ee7ff'));
@@ -1444,6 +1776,7 @@ addEventListener('orientationchange', () => {
 /* ============================================================
    Arranque
    ============================================================ */
+applySettings();
 showOverlayStart();
 </script>
 </body>
