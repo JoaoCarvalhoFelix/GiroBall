@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="pt">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#0e1330">
-<title>Bola PvP — Online</title>
+<title>GiroBall — Online</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -153,12 +153,12 @@
   <div id="score">
     <span class="p1" id="s0">0</span><span class="dash">–</span><span class="p2" id="s1">0</span>
   </div>
-  <div id="status">a aguardar sensores…</div>
+  <div id="status">waiting for sensors…</div>
   <div id="buildInfo"></div>
   <div id="msg"></div>
   <div id="trainingInfo"><span id="trainingText"></span></div>
   <div id="bar">
-    <button class="btn" id="btnCal">Calibrar</button>
+    <button class="btn" id="btnCal">Calibrate</button>
     <button class="btn" id="btnMenu">Menu</button>
   </div>
 </div>
@@ -184,7 +184,7 @@ import * as CANNON from 'cannon-es';
 import { joinRoom, getRelaySockets } from 'trystero';
 
 /* ============================================================
-   LOG DE REDE
+   NETWORK LOG
    ============================================================ */
 let netlogEl = null;
 const netlogEntries = [];
@@ -220,28 +220,28 @@ function netlog(msg, cls = '') {
 
 async function copyNetlog(event) {
   const button = event.currentTarget;
-  const report = `Jogo: ${GAME_BUILD}\nPágina: ${location.origin + location.pathname}\nNavegador: ${navigator.userAgent}\n` +
+  const report = `Game: ${GAME_BUILD}\nPage: ${location.origin + location.pathname}\nBrowser: ${navigator.userAgent}\n` +
     netlogEntries.map(({ ts, msg }) => `[${ts}] ${msg}`).join('\n');
   try {
     await navigator.clipboard.writeText(report);
-    button.textContent = 'Diagnóstico copiado ✓';
+    button.textContent = 'Diagnostics copied ✓';
   } catch (_) {
-    button.textContent = 'Não foi possível copiar';
+    button.textContent = 'Could not copy diagnostics';
   }
 }
 
 document.addEventListener('visibilitychange', () =>
-  netlog('página ' + document.visibilityState));
-window.addEventListener('online', () => netlog('navegador online'));
-window.addEventListener('offline', () => netlog('navegador offline', 'er'));
+  netlog('page ' + document.visibilityState));
+window.addEventListener('online', () => netlog('browser online'));
+window.addEventListener('offline', () => netlog('browser offline', 'er'));
 
 /* ============================================================
-   Utils / Constantes
+   Utilities / Constants
    ============================================================ */
 const DEG = Math.PI / 180;
-const GAME_BUILD = '2026.10.13.8';
+const GAME_BUILD = '2026.10.13.9';
 const buildInfo = document.getElementById('buildInfo');
-buildInfo.textContent = 'Jogo ' + GAME_BUILD;
+buildInfo.textContent = 'Game ' + GAME_BUILD;
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const lerp  = (a, b, t) => a + (b - a) * t;
 
@@ -261,7 +261,7 @@ const INVERT_X = 1;
 const INVERT_Y = -1;
 
 /* ============================================================
-   Renderer / Cena / Câmara
+   Renderer / Scene / Camera
    ============================================================ */
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -816,8 +816,8 @@ function applyGuestState(data) {
   if (guestFrames.length > 12) guestFrames.shift();
 
   if (Array.isArray(data.s) && data.s.length === 2) {
-    if (data.s[0] > score[0]) showMsg('GOLO! 🔵', '#35d0ff');
-    else if (data.s[1] > score[1]) showMsg('GOLO! 🔴', '#ff4d6d');
+    if (data.s[0] > score[0]) showMsg('GOAL! 🔵', '#35d0ff');
+    else if (data.s[1] > score[1]) showMsg('GOAL! 🔴', '#ff4d6d');
     score[0] = data.s[0]; score[1] = data.s[1];
     s0El.textContent = score[0]; s1El.textContent = score[1];
   }
@@ -825,7 +825,7 @@ function applyGuestState(data) {
 
 function renderGuest(now) {
   if (!guestFrames.length) return;
-  // Duas amostras do host permitem animar a 60 Hz sem saltos a cada pacote.
+  // Two host samples allow 60 Hz animation without jumps between packets.
   const renderTime = now - guestClockOffset - 60;
   while (guestFrames.length > 2 && guestFrames[1].t <= renderTime) guestFrames.shift();
   const from = guestFrames[0];
@@ -838,7 +838,7 @@ function renderGuest(now) {
 }
 
 /* ============================================================
-   SENSORES
+   SENSORS
    ============================================================ */
 const sensor = {
   ok: false, gx: 0, gy: 0,
@@ -866,7 +866,7 @@ function feedGravity(ax, ay, source) {
   const [sx, sy] = rotateToScreen(ax, ay);
   sensor.gx = sx; sensor.gy = sy;
   sensor.source = source; sensor.lastEventTs = performance.now();
-  if (!sensor.ok) { sensor.ok = true; setStatus('sensores ativos ✓', 'ok'); netlog('sensores ativos (' + source + ')', 'ok'); }
+  if (!sensor.ok) { sensor.ok = true; setStatus('sensors active ✓', 'ok'); netlog('sensors active (' + source + ')', 'ok'); }
   if (!sensor.calibrated) {
     sensor.buf.push([sx, sy]);
     if (sensor.buf.length >= 50) {
@@ -876,7 +876,7 @@ function feedGravity(ax, ay, source) {
       sensor.baseY = by / sensor.buf.length;
       sensor.calibrated = true;
       sensor.buf.length = 0;
-      netlog('calibração concluída', 'ok');
+      netlog('calibration complete', 'ok');
     }
   }
 }
@@ -916,7 +916,7 @@ function updateInput(dt) {
 }
 
 /* ============================================================
-   Física e IA
+   Physics and AI
    ============================================================ */
 function servo(body, ix, iy, dt) {
   const k = 1 - Math.exp(-PHYSICS.response * dt / Math.sqrt(PHYSICS.playerMass));
@@ -925,7 +925,7 @@ function servo(body, ix, iy, dt) {
 }
 
 /* ============================================================
-   Golo / reset
+   Goal / reset
    ============================================================ */
 const score = [0, 0];
 const s0El = document.getElementById('s0');
@@ -973,17 +973,17 @@ function checkGoal() {
     }
     if (p.z > HL + FOOTBALL_R) {
       score[0]++; s0El.textContent = score[0];
-      showMsg('GOLO! 🔵', '#35d0ff'); resetTimer = 1.4;
+      showMsg('GOAL! 🔵', '#35d0ff'); resetTimer = 1.4;
       return;
     }
     if (p.z < -(HL + FOOTBALL_R)) {
       score[1]++; s1El.textContent = score[1];
-      showMsg('GOLO! 🔴', '#ff4d6d'); resetTimer = 1.4;
+      showMsg('GOAL! 🔴', '#ff4d6d'); resetTimer = 1.4;
       return;
     }
 }
 
-/* Chute: toda a física é decidida pelo host (ou pelo treino local). */
+/* Kick: all physics is decided by the host (or local training). */
 const kicks = [0,1].map(() => ({energy:100,cooldown:0,held:false,charge:0,burst:0,startAt:0,rest:0}));
 let localKickHeld = false, kickSequence = 0, remoteKickSequence = -1, kickPointer = null;
 let localKickStart=0,localReleaseBurst=0;
@@ -1046,7 +1046,7 @@ function kickEvent(index,action) {
 function sendKick(action) {
   if (isHost) kickEvent(0,action);
   else if (kickAction && peerConnected) kickAction.send({v:GAME_BUILD,action,id:++kickSequence})
-    .catch(e=>netlog('erro no chute: '+e.message,'er'));
+    .catch(e=>netlog('kick error: '+e.message,'er'));
 }
 function beginLocalKick() {
   if (localKickHeld || !canPlay()) return;
@@ -1082,13 +1082,13 @@ function applyPhysics() {
   football.body.linearDamping=PHYSICS.drag;
   footballContacts.forEach(c=>c.restitution=PHYSICS.bounce);
 }
-/* Treino: caminhos no chão, condução com a bola e alvos na baliza. */
+/* Training: floor paths, dribbling, and goal targets. */
 const trainingMarkers = new THREE.Group(); scene.add(trainingMarkers);
 const courses={
-  line:{name:'Segue a linha',hint:'Guia o jogador pelos círculos, pela ordem indicada.',points:[[0,-5],[-3,-2],[3,1],[-3,4],[0,7]]},
-  dribble:{name:'Condução',hint:'Leva a bola branca pelos círculos. Usa toques curtos.',points:[[0,-2],[-2,1],[2,4],[0,7]]},
-  aim:{name:'Pontaria',hint:'Remata a bola branca para o alvo amarelo. Acerta em 5 alvos.'},
-  free:{name:'Treino livre',hint:'Experimenta a condução e os remates.'},
+  line:{name:'Follow the line',hint:'Guide your player through the circles in order.',points:[[0,-5],[-3,-2],[3,1],[-3,4],[0,7]]},
+  dribble:{name:'Dribbling',hint:'Move the white ball through the circles. Use short taps.',points:[[0,-2],[-2,1],[2,4],[0,7]]},
+  aim:{name:'Aiming',hint:'Shoot the white ball at the yellow target. Hit 5 targets.'},
+  free:{name:'Free practice',hint:'Practice dribbling and shooting.'},
 };
 function clearTrainingMarkers() {
   for(const object of [...trainingMarkers.children]) { object.geometry.dispose(); object.material.dispose(); trainingMarkers.remove(object); }
@@ -1126,7 +1126,7 @@ function startTraining(mode) {
   ballB.group.visible=false;ballB.body.collisionFilterMask=0;
   world.removeBody(ballB.body);
   document.getElementById('trainingInfo').style.display='block';
-  buildInfo.textContent=`Jogo ${GAME_BUILD} · Treino 🔵`;
+  buildInfo.textContent=`Game ${GAME_BUILD} · Training 🔵`;
   resetMatch();prepareTrainingAttempt();updateTraining(0);startGame();setStatus(courses[mode].name,'ok');
 }
 function updateTraining(dt) {
@@ -1138,11 +1138,11 @@ function updateTraining(dt) {
     const [x,z]=course.points[training.index];
     if(Math.hypot(pos.x-x,pos.z-z)<.75) {
       training.index++;drawTraining();
-      if(training.index===course.points.length) { training.complete=true;showMsg('CONCLUÍDO!','#7dffb0'); }
+      if(training.index===course.points.length) { training.complete=true;showMsg('COMPLETE!','#7dffb0'); }
     }
   }
-  const progress=course.points?`${training.index}/${course.points.length} círculos`:training.mode==='aim'?`${training.hits}/5 alvos · ${training.attempts} remates à baliza`:'';
-  document.getElementById('trainingText').textContent=`${course.name} · ${training.elapsed.toFixed(1)} s — ${training.complete?'Concluído! Repete ou escolhe outro exercício.':course.hint} ${progress}`;
+  const progress=course.points?`${training.index}/${course.points.length} circles`:training.mode==='aim'?`${training.hits}/5 targets · ${training.attempts} shots on goal`:'';
+  document.getElementById('trainingText').textContent=`${course.name} · ${training.elapsed.toFixed(1)} s — ${training.complete?'Complete! Try again or choose another exercise.':course.hint} ${progress}`;
 }
 function trainingGoal(p) {
   if(training.mode==='aim' && !training.complete) {
@@ -1150,13 +1150,13 @@ function trainingGoal(p) {
     const hit=p.z>0 && Math.abs(p.x-training.targetX)<.7;
     if(hit) training.hits++;
     training.complete=training.hits>=5;
-    showMsg(training.complete?'CONCLUÍDO!':hit?'NO ALVO!':'TENTA OUTRA VEZ',hit?'#7dffb0':'#ffd166');
+    showMsg(training.complete?'COMPLETE!':hit?'ON TARGET!':'TRY AGAIN',hit?'#7dffb0':'#ffd166');
   }
   resetTimer=1.2;
 }
 function showTrainingMenu() {
   cleanupRoom();overlay.classList.remove('hidden');
-  overlayContent.innerHTML=`<h1>Sala de treino</h1><p>Escolhe um exercício para treinar a solo.</p>${Object.entries(courses).map(([id,c])=>`<button class="btn trainingChoice" data-course="${id}">${c.name}</button>`).join('')}<button class="btn alt" id="btnTrainingBack">Voltar</button>`;
+  overlayContent.innerHTML=`<h1>Training room</h1><p>Choose a solo training exercise.</p>${Object.entries(courses).map(([id,c])=>`<button class="btn trainingChoice" data-course="${id}">${c.name}</button>`).join('')}<button class="btn alt" id="btnTrainingBack">Back</button>`;
   overlayContent.querySelectorAll('[data-course]').forEach(btn=>btn.onclick=()=>startTraining(btn.dataset.course));
   document.getElementById('btnTrainingBack').onclick=showOverlayMenu;
 }
@@ -1171,7 +1171,7 @@ const ROOM_CONFIG = {
   relayConfig: { redundancy: 3, warnOnRelayFailure: true },
 };
 
-// Observa a ligação WebRTC sem alterar ofertas, candidatos ou mensagens.
+// Observe the WebRTC connection without changing offers, candidates, or messages.
 const peerDiagnostics = [];
 class DiagnosticPeerConnection extends RTCPeerConnection {
   constructor(config) {
@@ -1179,16 +1179,16 @@ class DiagnosticPeerConnection extends RTCPeerConnection {
     const id = peerDiagnostics.length + 1;
     const info = { id, pc: this, host: 0, srflx: 0, relay: 0, other: 0 };
     peerDiagnostics.push(info);
-    netlog(`PC ${id} criado`);
+    netlog(`PC ${id} created`);
     this.addEventListener('signalingstatechange', () =>
-      netlog(`PC ${id} sinalização: ${this.signalingState}`));
+      netlog(`PC ${id} signaling: ${this.signalingState}`));
     this.addEventListener('icegatheringstatechange', () =>
-      netlog(`PC ${id} recolha ICE: ${this.iceGatheringState}`));
+      netlog(`PC ${id} ICE gathering: ${this.iceGatheringState}`));
     this.addEventListener('iceconnectionstatechange', () =>
       netlog(`PC ${id} ICE: ${this.iceConnectionState}`,
         this.iceConnectionState === 'failed' ? 'er' : ''));
     this.addEventListener('connectionstatechange', () =>
-      netlog(`PC ${id} ligação: ${this.connectionState}`,
+      netlog(`PC ${id} connection: ${this.connectionState}`,
         this.connectionState === 'failed' ? 'er' : ''));
     this.addEventListener('icecandidate', event => {
       const candidate = event.candidate;
@@ -1197,11 +1197,11 @@ class DiagnosticPeerConnection extends RTCPeerConnection {
         if (type in info) info[type]++;
         else info.other++;
       } else {
-        netlog(`PC ${id} candidatos: host=${info.host} srflx=${info.srflx} relay=${info.relay} outros=${info.other}`);
+        netlog(`PC ${id} candidates: host=${info.host} srflx=${info.srflx} relay=${info.relay} other=${info.other}`);
       }
     });
     this.addEventListener('icecandidateerror', event =>
-      netlog(`PC ${id} erro ICE ${event.errorCode}: ${event.errorText || 'sem detalhe'}`, 'wn'));
+      netlog(`PC ${id} ICE error ${event.errorCode}: ${event.errorText || 'no details'}`, 'wn'));
   }
 }
 
@@ -1219,35 +1219,35 @@ function observeRelaySockets() {
         try { data = JSON.parse(event.data); } catch (_) { return; }
         if (data[0] === 'EVENT') {
           stats.events++;
-          if (stats.events <= 3) netlog(`relay ${url}: sinal recebido #${stats.events}`, 'ok');
+          if (stats.events <= 3) netlog(`relay ${url}: signal received #${stats.events}`, 'ok');
         } else if (data[0] === 'OK') {
           if (data[2]) stats.accepted++;
           else {
             stats.rejected++;
-            netlog(`relay ${url}: envio rejeitado (${data[3] || 'sem motivo'})`, 'er');
+            netlog(`relay ${url}: send rejected (${data[3] || 'no reason'})`, 'er');
           }
         } else if (data[0] === 'EOSE') {
           stats.subscriptions++;
-          if (stats.subscriptions === 1) netlog(`relay ${url}: subscrição ativa`, 'ok');
+          if (stats.subscriptions === 1) netlog(`relay ${url}: subscription active`, 'ok');
         } else if (data[0] === 'CLOSED' || data[0] === 'NOTICE') {
           netlog(`relay ${url}: ${data[0]} ${data[2] || data[1] || ''}`, 'wn');
         }
       });
       socket.addEventListener('close', event =>
-        netlog(`relay ${url}: socket fechado (${event.code})`, 'wn'));
+        netlog(`relay ${url}: socket closed (${event.code})`, 'wn'));
       socket.addEventListener('error', () =>
-        netlog(`relay ${url}: erro de socket`, 'wn'));
+        netlog(`relay ${url}: socket error`, 'wn'));
     }
-  } catch (e) { netlog('diagnóstico dos relays: ' + e.message, 'wn'); }
+  } catch (e) { netlog('relay diagnostics: ' + e.message, 'wn'); }
 }
 
 function logConnectionSnapshot() {
   for (const [url, stats] of relayDiagnostics) {
-    netlog(`relay ${url}: recebidos=${stats.events}, aceites=${stats.accepted}, rejeitados=${stats.rejected}, subscrições=${stats.subscriptions}`);
+    netlog(`relay ${url}: received=${stats.events}, accepted=${stats.accepted}, rejected=${stats.rejected}, subscriptions=${stats.subscriptions}`);
   }
-  if (!peerDiagnostics.length) netlog('nenhuma ligação WebRTC criada', 'wn');
+  if (!peerDiagnostics.length) netlog('no WebRTC connection created', 'wn');
   for (const info of peerDiagnostics) {
-    netlog(`PC ${info.id}: sinalização=${info.pc.signalingState}, ICE=${info.pc.iceConnectionState}, candidatos host=${info.host} srflx=${info.srflx} relay=${info.relay}`);
+    netlog(`PC ${info.id}: signaling=${info.pc.signalingState}, ICE=${info.pc.iceConnectionState}, host candidates=${info.host} srflx=${info.srflx} relay=${info.relay}`);
   }
 }
 
@@ -1272,14 +1272,14 @@ function checkPeerBuild(data) {
   if (data?.v === GAME_BUILD) return true;
   if (!peerVersionMismatch) {
     peerVersionMismatch = true;
-    netlog(`versões diferentes: local=${GAME_BUILD}, adversário=${data?.v || 'antiga'}`, 'er');
+    netlog(`version mismatch: local=${GAME_BUILD}, opponent=${data?.v || 'old'}`, 'er');
     cleanupRoom();
-    showOverlayError('Os telemóveis têm versões diferentes do jogo. Abre a versão ' + GAME_BUILD + ' nos dois e cria uma nova sala.');
+    showOverlayError('The phones have different game versions. Open version ' + GAME_BUILD + ' on both phones and create a new room.');
   }
   return false;
 }
 
-/* Código de sala por áudio: tom inicial + 5 símbolos base36 + verificação. */
+/* Audio room code: starting tone + 5 base36 symbols + checksum. */
 const AUDIO_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
 const AUDIO_START_HZ = 600;
 const AUDIO_SYMBOL_HZ = n => 950 + n * 65;
@@ -1306,12 +1306,12 @@ async function emitRoomCode() {
   const hint = document.getElementById('audioHint');
   try {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContextClass) throw new Error('Áudio indisponível neste navegador.');
+    if (!AudioContextClass) throw new Error('Audio is unavailable in this browser.');
     const context = new AudioContextClass();
     audioSender = context;
     await context.resume();
     if (btn) btn.disabled = true;
-    if (hint) hint.textContent = 'A emitir… aproxima os telemóveis.';
+    if (hint) hint.textContent = 'Sending… move the phones closer.';
     const symbols = [...roomCode].map(char => AUDIO_ALPHABET.indexOf(char));
     symbols.push(audioChecksum(roomCode));
     const tones = [AUDIO_START_HZ, ...symbols.map(AUDIO_SYMBOL_HZ)];
@@ -1332,9 +1332,9 @@ async function emitRoomCode() {
       at += duration + 0.18;
     });
     await new Promise(resolve => setTimeout(resolve, Math.ceil((at - context.currentTime) * 1000)));
-    if (hint?.isConnected) hint.textContent = 'Código emitido. Podes emitir novamente.';
+    if (hint?.isConnected) hint.textContent = 'Code sent. You can send it again.';
   } catch (e) {
-    netlog('erro a emitir código: ' + e.message, 'er');
+    netlog('error sending code: ' + e.message, 'er');
     if (hint?.isConnected) hint.textContent = e.message;
   } finally {
     const context = audioSender;
@@ -1364,7 +1364,7 @@ function detectedTone(samples, sampleRate) {
       nextPower = power;
     }
   }
-  // Amplitude aproximada do tom; a margem rejeita fala e ruído ambiente.
+  // Approximate tone amplitude; the threshold rejects speech and background noise.
   return 2 * Math.sqrt(bestPower) / samples.length > 0.004 &&
     bestPower > nextPower * 1.5 ? best : null;
 }
@@ -1374,22 +1374,22 @@ async function listenForRoomCode() {
   const hint = document.getElementById('audioHint');
   if (audioReceiver) {
     stopAudioReceiver();
-    btn.textContent = 'Ouvir';
-    hint.textContent = 'Escuta parada.';
+    btn.textContent = 'Listen';
+    hint.textContent = 'Listening stopped.';
     return;
   }
   if (!navigator.mediaDevices?.getUserMedia || !(window.AudioContext || window.webkitAudioContext)) {
-    hint.textContent = 'Microfone indisponível. Abre o jogo em HTTPS.';
+    hint.textContent = 'Microphone unavailable. Open the game over HTTPS.';
     return;
   }
   btn.disabled = true;
-  hint.textContent = 'A pedir acesso ao microfone…';
+  hint.textContent = 'Requesting microphone access…';
   let stream, context;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ audio: {
       echoCancellation: false, noiseSuppression: false, autoGainControl: false
     } });
-    // O utilizador pode ter voltado ao menu enquanto autorizava o microfone.
+    // The user may have returned to the menu while granting microphone access.
     if (!btn.isConnected) { stream.getTracks().forEach(t => t.stop()); return; }
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     context = new AudioContextClass();
@@ -1402,8 +1402,8 @@ async function listenForRoomCode() {
     const receiver = { stream, context, timer: null };
     audioReceiver = receiver;
     btn.disabled = false;
-    btn.textContent = 'Parar de ouvir';
-    hint.textContent = 'À escuta… toca em “Emitir” no outro telemóvel.';
+    btn.textContent = 'Stop listening';
+    hint.textContent = 'Listening… tap “Emit” on the other phone.';
     const SYMBOL_PERIOD_MS = 460;
     let started = false, startVotes = 0, firstTone = null;
     let firstToneVotes = 0, firstSymbolAt = 0, currentSlot = 0;
@@ -1425,20 +1425,20 @@ async function listenForRoomCode() {
       const [value, count] = [...counts].sort((a, b) => b[1] - a[1])[0] || [];
       votes = [];
       if (count < 2) {
-        netlog(`som incompleto no símbolo ${symbols.length + 1}/6`, 'wn');
-        resetPacket('Não consegui ouvir tudo. Pede para emitir novamente.');
+        netlog(`incomplete sound at symbol ${symbols.length + 1}/6`, 'wn');
+        resetPacket('Could not hear the whole code. Ask the host to send it again.');
         return false;
       }
       symbols.push(value);
-      hint.textContent = `A receber código… ${symbols.length}/6`;
+      hint.textContent = `Receiving code… ${symbols.length}/6`;
       if (symbols.length !== 6) return true;
       const code = symbols.slice(0, 5).map(n => AUDIO_ALPHABET[n]).join('');
       if (audioChecksum(code) !== symbols[5]) {
-        netlog('código áudio não passou na verificação', 'wn');
-        resetPacket('Código não reconhecido. Pede para emitir novamente.');
+        netlog('audio code failed verification', 'wn');
+        resetPacket('Code not recognized. Ask the host to send it again.');
         return false;
       }
-      netlog('código recebido por áudio: ' + code, 'ok');
+      netlog('code received through audio: ' + code, 'ok');
       document.getElementById('roomInput').value = code;
       stopAudioReceiver();
       joinRoomWithCode(code);
@@ -1454,7 +1454,7 @@ async function listenForRoomCode() {
           started = true;
           firstTone = null;
           firstToneVotes = 0;
-          hint.textContent = 'A receber código…';
+          hint.textContent = 'Receiving code…';
         }
         return;
       }
@@ -1468,15 +1468,15 @@ async function listenForRoomCode() {
         }
         return;
       }
-      // Cada símbolo ocupa um intervalo conhecido. O fim do último é
-      // reconhecido pelo relógio, mesmo quando o microfone não fica silencioso.
+      // Each symbol occupies a known interval. The final symbol ends on a timer,
+      // even if the microphone never becomes silent.
       const slot = Math.floor((now - firstSymbolAt + 50) / SYMBOL_PERIOD_MS);
       while (currentSlot < slot && currentSlot < 6) {
         if (!finishSymbol()) return;
         currentSlot++;
       }
       if (slot >= 6) {
-        resetPacket('Código incompleto. Pede para emitir novamente.');
+        resetPacket('Incomplete code. Ask the host to send it again.');
         return;
       }
       if (tone !== null && tone >= 0 &&
@@ -1487,8 +1487,8 @@ async function listenForRoomCode() {
   } catch (e) {
     stream?.getTracks().forEach(track => track.stop());
     context?.close().catch(() => {});
-    netlog('erro ao ouvir código: ' + e.message, 'er');
-    if (hint?.isConnected) hint.textContent = 'Não foi possível usar o microfone. Confirma a permissão e o HTTPS.';
+    netlog('error listening for code: ' + e.message, 'er');
+    if (hint?.isConnected) hint.textContent = 'Could not use the microphone. Check its permission and HTTPS.';
     if (btn?.isConnected) btn.disabled = false;
   }
 }
@@ -1547,26 +1547,26 @@ function startRelayWatch() {
     const { total, open, urls } = relaySummary();
     const sig = urls.join(',');
     if (sig !== last) {
-      netlog(`relays Nostr ligados: ${open}/${total}`, open ? 'ok' : 'wn');
-      if (open) netlog('relays ativos: ' + urls.join(', '));
+      netlog(`Nostr relays connected: ${open}/${total}`, open ? 'ok' : 'wn');
+      if (open) netlog('active relays: ' + urls.join(', '));
       last = sig;
     }
     if (open > 0) {
-      setStatus(isHost ? 'sala anunciada — à espera do adversário…' : 'relay ligado — a procurar host…', 'warn');
+      setStatus(isHost ? 'room announced — waiting for opponent…' : 'relay connected — looking for host…', 'warn');
     } else {
-      setStatus('a ligar aos relays…', 'warn');
+      setStatus('connecting to relays…', 'warn');
     }
   }, 1000);
 }
 
 function handleJoinError(details) {
   const err = details?.error;
-  const msg = err?.message || String(err || 'erro desconhecido');
+  const msg = err?.message || String(err || 'unknown error');
   const peer = details?.peerId ? ` peer=${details.peerId}` : '';
   if (details?.peerId) webrtcJoinFailed = true;
-  netlog(`falha WebRTC${peer}: ${msg}`, 'er');
+  netlog(`WebRTC failure${peer}: ${msg}`, 'er');
   logConnectionSnapshot();
-  setStatus('falha de ligação WebRTC', 'err');
+  setStatus('WebRTC connection failed', 'err');
 }
 
 function setupRoom(code, host) {
@@ -1580,17 +1580,17 @@ function setupRoom(code, host) {
   isHost = host;
   roomCode = code;
   cameraSide = host ? -1 : 1;
-  buildInfo.textContent = `Jogo ${GAME_BUILD} · ${host ? 'Host 🔵' : 'Convidado 🔴'}`;
+  buildInfo.textContent = `Game ${GAME_BUILD} · ${host ? 'Host 🔵' : 'Guest 🔴'}`;
   updateCamera();
   resetGeneration = 0;
   resetMatch();
 
-  netlog(`joinRoom: app=${APP_ID} sala=${roomCode} Trystero=0.25.4`);
+  netlog(`joinRoom: app=${APP_ID} room=${roomCode} Trystero=0.25.4`);
   room = joinRoom({ ...ROOM_CONFIG, rtcPolyfill: DiagnosticPeerConnection },
     roomCode, { onJoinError: handleJoinError });
   observeRelaySockets();
   online = true;
-  netlog('sala inicializada localmente', 'ok');
+  netlog('room initialized locally', 'ok');
 
   stateAction = room.makeAction('state');
   inputAction = room.makeAction('input');
@@ -1613,26 +1613,26 @@ function setupRoom(code, host) {
     if (isHost && !peerConnected) resetMatch();
     peerConnected = true;
     clearTimeout(joinTimeout);
-    netlog('peer ligado: ' + peerId, 'ok');
-    setStatus(isHost ? 'adversário ligado ✓' : 'ligado ao host ✓', 'ok');
+    netlog('peer connected: ' + peerId, 'ok');
+    setStatus(isHost ? 'opponent connected ✓' : 'connected to host ✓', 'ok');
     startGame();
   };
 
   room.onPeerLeave = (peerId) => {
     endLocalKick(true);resetKicks();
     peerConnected = false;
-    netlog('peer saiu: ' + peerId, 'wn');
-    setStatus('adversário saiu', 'warn');
+    netlog('peer left: ' + peerId, 'wn');
+    setStatus('opponent left', 'warn');
   };
 
   startRelayWatch();
 }
 
 /* ----------------------------------------------------------
-   Criar sala
+   Create room
 ---------------------------------------------------------- */
 function createRoom() {
-  netlog('botão "Criar sala" clicado');
+  netlog('"Create room" clicked');
   try {
     const code = Math.random().toString(36).slice(2, 7).toUpperCase();
     setupRoom(code, true);
@@ -1655,23 +1655,23 @@ function createRoom() {
         phase:resetTimer>0?'goal':kickoffTimer>0?'ready':'play',
         s: [score[0], score[1]],
         r: resetGeneration,
-      }).catch(e => netlog('erro a enviar state: ' + e.message, 'er'));
+      }).catch(e => netlog('error sending state: ' + e.message, 'er'));
     }, 33);
 
     showOverlayHostWaiting(roomCode);
-    setStatus('a ligar aos relays…', 'warn');
+    setStatus('connecting to relays…', 'warn');
   } catch (e) {
-    netlog('ERRO em createRoom: ' + e.message, 'er');
+    netlog('ERROR in createRoom: ' + e.message, 'er');
     cleanupRoom();
-    showOverlayError('Erro ao criar sala: ' + e.message);
+    showOverlayError('Could not create room: ' + e.message);
   }
 }
 
 /* ----------------------------------------------------------
-   Entrar em sala
+   Join room
 ---------------------------------------------------------- */
 function joinRoomWithCode(code) {
-  netlog('a entrar na sala "' + code + '"');
+  netlog('joining room "' + code + '"');
   try {
     setupRoom(code, false);
 
@@ -1680,41 +1680,41 @@ function joinRoomWithCode(code) {
     inputInterval = setInterval(() => {
       if (!peerConnected) return;
       inputAction.send({ v: GAME_BUILD, x: -input.x, y: -input.y })
-        .catch(e => netlog('erro a enviar input: ' + e.message, 'er'));
+        .catch(e => netlog('error sending input: ' + e.message, 'er'));
     }, 33);
 
     joinTimeout = setTimeout(() => {
       if (!peerConnected) {
         const { total, open } = relaySummary();
         const detail = open === 0
-          ? 'Não foi possível contactar os relays de matchmaking.'
+          ? 'Could not contact the matchmaking relays.'
           : webrtcJoinFailed
-            ? 'O host respondeu, mas a ligação WebRTC entre os telemóveis falhou.'
-            : 'Os relays estão ligados, mas o host não foi encontrado. Confirma o código e que o host continua na sala.';
-        netlog(`timeout: nenhum peer após 20s (relays ${open}/${total})`, 'er');
+            ? 'The host responded, but the WebRTC connection between the phones failed.'
+            : 'The relays are connected, but the host was not found. Check the code and make sure the host is still in the room.';
+        netlog(`timeout: no peer after 20s (relays ${open}/${total})`, 'er');
         logConnectionSnapshot();
         showOverlayError(detail);
       }
     }, 20000);
 
     showOverlayJoining();
-    setStatus('a ligar aos relays…', 'warn');
+    setStatus('connecting to relays…', 'warn');
   } catch (e) {
-    netlog('ERRO em joinRoomWithCode: ' + e.message, 'er');
+    netlog('ERROR in joinRoomWithCode: ' + e.message, 'er');
     cleanupRoom();
-    showOverlayError('Erro ao entrar: ' + e.message);
+    showOverlayError('Could not join room: ' + e.message);
   }
 }
 
 function startGame() {
   gameRunning = true;
   document.getElementById('overlay').classList.add('hidden');
-  setStatus('jogo a correr', 'ok');
-  netlog('jogo iniciado', 'ok');
+  setStatus('game running', 'ok');
+  netlog('game started', 'ok');
 }
 
 /* ============================================================
-   Overlay dinâmico
+   Dynamic overlay
    ============================================================ */
 const overlay = document.getElementById('overlay');
 const overlayContent = document.getElementById('overlayContent');
@@ -1724,9 +1724,9 @@ function attachNetlog() {
   renderNetlog();
   const version = document.createElement('div');
   version.style.cssText = 'font:11px system-ui;color:#9badca';
-  version.append('Jogo ' + GAME_BUILD + ' · ');
+  version.append('Game ' + GAME_BUILD + ' · ');
   const reload = document.createElement('a');
-  reload.textContent = 'Recarregar';
+  reload.textContent = 'Reload';
   reload.style.color = '#9ee7ff';
   const url = new URL(location.href);
   url.searchParams.set('v', GAME_BUILD);
@@ -1740,12 +1740,12 @@ function showOverlayMenu() {
   stopAudioReceiver();
   overlay.classList.remove('hidden');
   overlayContent.innerHTML = `
-    <h1>⚽ Bola PvP</h1>
-    <p>Marca na baliza adversária com a bola branca. Joga a dois ou pratica no treino.</p>
+    <h1>⚽ GiroBall</h1>
+    <p>Score in your opponent’s goal with the white ball. Play together or practice solo.</p>
     <div class="row">
-      <button class="btn" id="btnCreate">Criar sala</button>
-      <button class="btn alt" id="btnJoin">Entrar em sala</button>
-      <button class="btn" id="btnTraining">Treino a solo</button>
+      <button class="btn" id="btnCreate">Create room</button>
+      <button class="btn alt" id="btnJoin">Join room</button>
+      <button class="btn" id="btnTraining">Solo training</button>
     </div>
     <div id="netlog"></div>
   `;
@@ -1753,19 +1753,19 @@ function showOverlayMenu() {
   document.getElementById('btnCreate').addEventListener('click', createRoom);
   document.getElementById('btnJoin').addEventListener('click', showOverlayJoinInput);
   document.getElementById('btnTraining').addEventListener('click', showTrainingMenu);
-  netlog('menu pronto');
+  netlog('menu ready');
 }
 
 function showOverlayJoinInput() {
   overlay.classList.remove('hidden');
   overlayContent.innerHTML = `
-    <h1>Entrar em sala</h1>
-    <p>Introduz o código ou aproxima os telemóveis para o ouvir:</p>
+    <h1>Join room</h1>
+    <p>Enter the code or move the phones closer to hear it:</p>
     <input id="roomInput" maxlength="5" placeholder="ABCDE" autocomplete="off" autocapitalize="characters">
     <div class="row">
-      <button class="btn" id="btnDoJoin">Entrar</button>
-      <button class="btn alt" id="btnListen">Ouvir</button>
-      <button class="btn alt" id="btnBack">Voltar</button>
+      <button class="btn" id="btnDoJoin">Join</button>
+      <button class="btn alt" id="btnListen">Listen</button>
+      <button class="btn alt" id="btnBack">Back</button>
     </div>
     <p id="audioHint" role="status" aria-live="polite"></p>
     <div id="netlog"></div>
@@ -1774,49 +1774,49 @@ function showOverlayJoinInput() {
   const inp = document.getElementById('roomInput');
   document.getElementById('btnDoJoin').addEventListener('click', () => {
     const code = inp.value.trim().toUpperCase();
-    if (code.length < 4) { showOverlayError('Código inválido.'); return; }
+    if (code.length < 4) { showOverlayError('Invalid code.'); return; }
     stopAudioReceiver();
     joinRoomWithCode(code);
   });
   document.getElementById('btnListen').addEventListener('click', listenForRoomCode);
   document.getElementById('btnBack').addEventListener('click', showOverlayMenu);
-  netlog('à espera do código');
+  netlog('waiting for code');
   listenForRoomCode();
 }
 
 function showOverlayHostWaiting(code) {
   overlay.classList.remove('hidden');
   overlayContent.innerHTML = `
-    <h1>Sala criada</h1>
-    <p>Partilha este código com o teu adversário:</p>
+    <h1>Room created</h1>
+    <p>Share this code with your opponent:</p>
     <div class="code" id="roomCode">${code}</div>
-    <p style="font-size:13px;opacity:.7">Toque no código para copiar</p>
-    <button class="btn" id="btnEmit">Emitir</button>
-    <p id="audioHint" role="status" aria-live="polite">Emite o código pela coluna para o outro telemóvel ouvir.</p>
+    <p style="font-size:13px;opacity:.7">Tap the code to copy it</p>
+    <button class="btn" id="btnEmit">Emit</button>
+    <p id="audioHint" role="status" aria-live="polite">Play the code through your speaker for the other phone to hear.</p>
     <div class="row">
       <div id="spinner"></div>
-      <span style="color:#a8bcdc;font-size:14px">À espera de adversário…</span>
+      <span style="color:#a8bcdc;font-size:14px">Waiting for opponent…</span>
     </div>
-    <button class="btn alt" id="btnCopyLog">Copiar diagnóstico</button>
+    <button class="btn alt" id="btnCopyLog">Copy diagnostics</button>
     <div id="netlog"></div>
   `;
   attachNetlog();
-  netlog('sala ' + code + ' à espera de peer', 'ok');
+  netlog('room ' + code + ' waiting for peer', 'ok');
   const codeEl = document.getElementById('roomCode');
   document.getElementById('btnEmit').addEventListener('click', emitRoomCode);
   document.getElementById('btnCopyLog').addEventListener('click', copyNetlog);
   codeEl.addEventListener('click', () => {
-    navigator.clipboard?.writeText(code).then(() => showMsg('Copiado!', '#9ee7ff'));
+    navigator.clipboard?.writeText(code).then(() => showMsg('Copied!', '#9ee7ff'));
   });
 }
 
 function showOverlayJoining() {
   overlay.classList.remove('hidden');
   overlayContent.innerHTML = `
-    <h1>A ligar…</h1>
+    <h1>Connecting…</h1>
     <div class="row"><div id="spinner"></div></div>
-    <p>A procurar o host…</p>
-    <button class="btn alt" id="btnCopyLog">Copiar diagnóstico</button>
+    <p>Looking for host…</p>
+    <button class="btn alt" id="btnCopyLog">Copy diagnostics</button>
     <div id="netlog"></div>
   `;
   attachNetlog();
@@ -1829,8 +1829,8 @@ function showOverlayError(msg) {
   overlayContent.innerHTML = `
     <h1>Ops…</h1>
     <div class="err">${msg}</div>
-    <button class="btn alt" id="btnCopyLog">Copiar diagnóstico</button>
-    <button class="btn" id="btnRetry">Voltar ao menu</button>
+    <button class="btn alt" id="btnCopyLog">Copy diagnostics</button>
+    <button class="btn" id="btnRetry">Back to menu</button>
     <div id="netlog"></div>
   `;
   attachNetlog();
@@ -1844,13 +1844,13 @@ function showOverlayError(msg) {
 }
 
 /* ============================================================
-   Pedido de sensores
+   Sensor permissions
    ============================================================ */
 let sensorPermissionPending=false;
 async function requestSensors(userGesture=false){
   window.addEventListener('devicemotion',onMotion,true);
   window.addEventListener('deviceorientation',onOrientation,true);
-  if(!window.isSecureContext){setStatus('Os sensores precisam de HTTPS','err');return;}
+  if(!window.isSecureContext){setStatus('Motion sensors require HTTPS','err');return;}
   const permissionAPIs=[window.DeviceMotionEvent,window.DeviceOrientationEvent].filter(api=>typeof api?.requestPermission==='function');
   if(permissionAPIs.length&&!userGesture){
     document.addEventListener('pointerdown',()=>requestSensors(true),{once:true,capture:true});
@@ -1859,13 +1859,13 @@ async function requestSensors(userGesture=false){
   if(permissionAPIs.length&&!sensorPermissionPending){
     sensorPermissionPending=true;
     const permissions=await Promise.allSettled(permissionAPIs.map(api=>api.requestPermission()));
-    if(permissions.every(p=>p.status==='rejected'||p.value!=='granted'))setStatus('Permite movimento nas definições do navegador','warn');
+    if(permissions.every(p=>p.status==='rejected'||p.value!=='granted'))setStatus('Allow motion sensors in your browser settings','warn');
     sensorPermissionPending=false;
   }
 }
 
 /* ============================================================
-   Loop principal
+   Main loop
    ============================================================ */
 let last = performance.now();
 
@@ -1909,13 +1909,13 @@ function tick(now) {
 requestAnimationFrame(tick);
 
 /* ============================================================
-   Botões fixos
+   Fixed buttons
    ============================================================ */
 document.getElementById('btnCal').addEventListener('click', () => {
   requestSensors(true);
   sensor.calibrated = false;
   sensor.buf.length = 0;
-  showMsg('Calibrado', '#9ee7ff');
+  showMsg('Calibrated', '#9ee7ff');
 });
 
 renderer.domElement.addEventListener('pointerdown',e=>{
@@ -1944,7 +1944,7 @@ addEventListener('orientationchange', () => {
 });
 
 /* ============================================================
-   Arranque
+   Startup
    ============================================================ */
 applyPhysics();
 showOverlayMenu();
