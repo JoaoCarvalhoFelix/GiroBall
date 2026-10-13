@@ -73,14 +73,7 @@
     display: flex; flex-direction: column; gap: 10px; align-items: flex-end;
   }
   #bar .btn { padding: 9px 12px; font-size: 12px; }
-  #kickBox { position:absolute; bottom:max(22px, env(safe-area-inset-bottom)); left:50%; transform:translateX(-50%); width:128px; text-align:center; }
-  #kickPad { pointer-events:auto; touch-action:none; width:128px; height:94px; border:2px solid #bbf3ff; border-radius:26px; color:#08182b; font:800 17px system-ui; background:linear-gradient(145deg,#baf8ff,#35d0ff); box-shadow:0 6px 0 #13738a; }
-  #kickPad.charging { background:linear-gradient(145deg,#fff2ac,#ffb638); transform:scale(1.06); }
-  #kickPad:disabled { opacity:.45; }
-  .meter { height:6px; background:#16233a; border-radius:8px; overflow:hidden; margin-top:8px; }
-  .meter i { display:block; height:100%; width:0; background:#ffd166; }
   #energyFill { background:#7dffb0; width:100%; }
-  #kickHint { color:#b9d0e8; font-size:10px; margin-top:6px; min-height:24px; }
   #trainingInfo { position:absolute; top:104px; left:50%; transform:translateX(-50%); width:min(88vw,440px); text-align:center; font-size:12px; color:#dceaff; background:#0a173bcc; padding:8px; border-radius:12px; display:none; }
   #trainingInfo button { pointer-events:auto; margin:5px; }
   #settingsPanel { position:fixed; inset:0; z-index:40; background:#050b20d9; display:flex; justify-content:center; align-items:center; padding:16px; }
@@ -97,7 +90,7 @@
   #overlay { overflow-y:auto; touch-action:pan-y; }
   #overlayContent { display:flex; flex-direction:column; align-items:center; gap:14px; margin:auto; }
   .trainingChoice { width:min(85vw,350px); }
-  @media(max-width:390px) { #stick { width:70px; height:70px; left:10px; } #bar {right:8px;gap:8px;} #kickBox,#kickPad {width:116px;} }
+  @media(max-width:390px) { #stick { width:70px; height:70px; left:10px; } #bar {right:8px;gap:8px;} }
   .btn {
     pointer-events: auto;
     appearance: none; border: 0; cursor: pointer;
@@ -199,12 +192,6 @@
   <div id="debug"></div>
   <div id="msg"></div>
   <div id="trainingInfo"><span id="trainingText"></span><br><button class="btn" id="btnTrainingReset">Repetir</button><button class="btn alt" id="btnExercises">Exercícios</button></div>
-  <div id="kickBox" hidden>
-    <button id="kickPad" aria-label="Chutar: tocar para driblar, manter e largar para rematar">CHUTAR</button>
-    <div class="meter" aria-label="Carga"><i id="chargeFill"></i></div>
-    <div class="meter" aria-label="Energia"><i id="energyFill"></i></div>
-    <div id="kickHint">Toca ou mantém e larga</div>
-  </div>
   <div id="bar">
     <button class="btn" id="btnCal">Calibrar</button>
     <button class="btn alt" id="btnSala" style="display:none">Sala</button>
@@ -295,7 +282,7 @@ window.addEventListener('offline', () => netlog('navegador offline', 'er'));
    Utils / Constantes
    ============================================================ */
 const DEG = Math.PI / 180;
-const GAME_BUILD = '2026.10.13.1';
+const GAME_BUILD = '2026.10.13.2';
 const buildInfo = document.getElementById('buildInfo');
 buildInfo.textContent = 'Jogo ' + GAME_BUILD;
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -303,8 +290,9 @@ const lerp  = (a, b, t) => a + (b - a) * t;
 
 const FIELD_W = 12, FIELD_L = 18;
 const HW = FIELD_W / 2, HL = FIELD_L / 2;
-const GOAL_W = 5, GOAL_D = 2.2;
-const WALL_T = 0.5, WALL_H = 1.5;
+const GOAL_W = 3.6, GOAL_D = 1.6;
+const WALL_T = 0.5, WALL_H = 1.8;
+const CORNER_R = 2.4, RAMP_W = 1.5, RAMP_H = 1.35;
 const BALL_R = 0.7;
 const FOOTBALL_R = 0.43;
 const SETTING_SPECS = [
@@ -348,44 +336,67 @@ renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0e1330);
-scene.fog = new THREE.Fog(0x0e1330, 48, 95);
+scene.background = new THREE.Color(0xd9d1bf);
+scene.fog = new THREE.Fog(0xd9d1bf, 48, 95);
 
-const camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 0.5, 250);
+const camera = new THREE.PerspectiveCamera(44, innerWidth / innerHeight, 0.5, 250);
 let cameraSide = -1;
 function updateCamera() {
   camera.aspect = innerWidth / innerHeight;
-  const tanV = Math.tan((camera.fov * DEG) / 2);
-  const tanH = tanV * camera.aspect;
-  const D = clamp(8 / Math.max(tanH, 0.15), 28, 52);
-  camera.position.set(0, 0.65 * D, cameraSide * 0.758 * D);
-  camera.lookAt(0, 0, 0);
   camera.updateProjectionMatrix();
+  const bounds=outline(RAMP_W+.35);
+  for(const side of [-1,1])for(const x of [-GOAL_W/2,GOAL_W/2])bounds.push(new THREE.Vector3(x,0,side*(HL+GOAL_D+.2)));
+  // Fit the complete tray while retaining a goal-to-goal perspective on phones.
+  for(let distance=22;distance<100;distance+=.4){
+    camera.position.set(0,.8*distance,cameraSide*.6*distance);camera.lookAt(0,0,0);camera.updateMatrixWorld();
+    if(bounds.every(p=>{const q=p.clone();q.y=RAMP_H; q.project(camera);return Math.abs(q.x)<.92&&Math.abs(q.y)<.72;}))break;
+  }
 }
 updateCamera();
 
-scene.add(new THREE.HemisphereLight(0xbfd9ff, 0x16233a, 1.2));
-const sun = new THREE.DirectionalLight(0xffffff, 2.1);
-sun.position.set(10, 26, -14);
+scene.add(new THREE.HemisphereLight(0xe4f1ff, 0xb5a181, .8));
+// Large studio panels provide broad highlights on the molded plastic.
+const studio = new THREE.Scene();
+studio.background = new THREE.Color(0x9eabb8);
+for (const [x,y,z,w,h,power] of [[-8,12,-8,12,12,5],[10,8,4,8,14,2],[0,16,0,18,12,2]]) {
+  const panel = new THREE.Mesh(new THREE.PlaneGeometry(w,h),new THREE.MeshBasicMaterial({color:new THREE.Color(power,power*.96,power*.88),side:THREE.DoubleSide}));
+  panel.position.set(x,y,z); panel.lookAt(0,0,0); studio.add(panel);
+}
+const pmrem = new THREE.PMREMGenerator(renderer);
+const studioMap = pmrem.fromScene(studio,.06);
+scene.environment = studioMap.texture;
+studio.traverse(o=>{o.geometry?.dispose();o.material?.dispose();}); pmrem.dispose();
+const sun = new THREE.DirectionalLight(0xffedcf, 3.2);
+sun.position.set(-9, 22, -12);
 sun.castShadow = true;
-sun.shadow.mapSize.set(1024, 1024);
+sun.shadow.mapSize.set(2048, 2048);
 sun.shadow.camera.near = 1; sun.shadow.camera.far = 80;
 const S = 17;
 sun.shadow.camera.left = -S; sun.shadow.camera.right = S;
 sun.shadow.camera.top = S;   sun.shadow.camera.bottom = -S;
 sun.shadow.camera.updateProjectionMatrix();
-sun.shadow.bias = -0.0009;
+sun.shadow.bias = -0.00015;
+sun.shadow.normalBias = .025;
+sun.shadow.radius = 3;
 scene.add(sun, sun.target);
 
+// Fine molded surface grain, shared by the plastic parts.
+const grainCanvas=document.createElement('canvas'); grainCanvas.width=grainCanvas.height=128;
+const grainCtx=grainCanvas.getContext('2d'); const grainData=grainCtx.createImageData(128,128);
+let grainSeed=17;
+for(let i=0;i<grainData.data.length;i+=4){grainSeed=(grainSeed*1664525+1013904223)>>>0;const v=120+(grainSeed%17);grainData.data.set([v,v,v,255],i);}
+grainCtx.putImageData(grainData,0,0);
+const grain=new THREE.CanvasTexture(grainCanvas); grain.wrapS=grain.wrapT=THREE.RepeatWrapping;grain.repeat.set(8,12);
+const plastic=(color,roughness=.38)=>new THREE.MeshPhysicalMaterial({color,roughness,metalness:0,clearcoat:.22,clearcoatRoughness:.32,envMapIntensity:.4,bumpMap:grain,bumpScale:.012});
 const M = {
-  pitch: new THREE.MeshStandardMaterial({ color: 0x2fa96b, roughness: 0.95 }),
-  wall:  new THREE.MeshStandardMaterial({ color: 0xe8f0ff, roughness: 0.6, metalness: 0.05 }),
-  line:  new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5 }),
-  goalA: new THREE.MeshStandardMaterial({ color: 0x35d0ff, emissive: 0x0d5a7a, roughness: 0.35 }),
-  goalB: new THREE.MeshStandardMaterial({ color: 0xff4d6d, emissive: 0x7a0d22, roughness: 0.35 }),
+  pitch: plastic(0x4c9b70,.78), wall:plastic(0xfff1cf,.46), rim:plastic(0xf5bc36,.3),
+  line:new THREE.MeshStandardMaterial({color:0xfff8dd,roughness:.8}),
+  goalA:plastic(0x2b7ec2,.28),goalB:plastic(0xf09235,.28),
 };
 
 const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -30, 0) });
@@ -417,38 +428,134 @@ function staticBox(cx, cy, cz, sx, sy, sz, threeMat, physMat) {
   mesh.castShadow = mesh.receiveShadow = true;
   scene.add(mesh);
 }
-staticBox(0, -0.5, 0, FIELD_W + 2*WALL_T + 3, 1, FIELD_L + 2*WALL_T + GOAL_D*2 + 3, M.pitch, matGround);
-staticBox(-(HW + WALL_T/2), WALL_H/2, 0, WALL_T, WALL_H, FIELD_L, M.wall, matWall);
-staticBox( (HW + WALL_T/2), WALL_H/2, 0, WALL_T, WALL_H, FIELD_L, M.wall, matWall);
-
-const segW  = (FIELD_W - GOAL_W) / 2;
-const segCx = GOAL_W/2 + segW/2;
-for (const s of [-1, 1]) {
-  const zEnd = s * (HL + WALL_T/2);
-  staticBox( segCx, WALL_H/2, zEnd, segW, WALL_H, WALL_T, M.wall, matWall);
-  staticBox(-segCx, WALL_H/2, zEnd, segW, WALL_H, WALL_T, M.wall, matWall);
-  staticBox( GOAL_W/2 + WALL_T/2, WALL_H/2, s*(HL + GOAL_D/2), WALL_T, WALL_H, GOAL_D, M.wall, matWall);
-  staticBox(-GOAL_W/2 - WALL_T/2, WALL_H/2, s*(HL + GOAL_D/2), WALL_T, WALL_H, GOAL_D, M.wall, matWall);
-  staticBox(0, WALL_H/2, s*(HL + GOAL_D + WALL_T/2), GOAL_W + 2*WALL_T, WALL_H, WALL_T, s < 0 ? M.goalA : M.goalB, matWall);
+// A rounded rectangle sampled counterclockwise in the X/Z plane.
+function outline(offset=0) {
+  const points=[];
+  for(const [cx,cz,start] of [[HW-CORNER_R,HL-CORNER_R,0],[-HW+CORNER_R,HL-CORNER_R,90],[-HW+CORNER_R,-HL+CORNER_R,180],[HW-CORNER_R,-HL+CORNER_R,270]]) {
+    for(let j=0;j<=24;j++) {
+      const a=(start+j*90/24)*DEG;
+      points.push(new THREE.Vector3(cx+(CORNER_R+offset)*Math.cos(a),0,cz+(CORNER_R+offset)*Math.sin(a)));
+    }
+    // End straights include exact goal-mouth endpoints.
+    if(start===0) for(const x of [GOAL_W/2,-GOAL_W/2]) points.push(new THREE.Vector3(x,0,HL+offset));
+    if(start===180) for(const x of [-GOAL_W/2,GOAL_W/2]) points.push(new THREE.Vector3(x,0,-HL-offset));
+  }
+  return points;
 }
-
-function flat(geo, mat, y = 0.02) {
-  const m = new THREE.Mesh(geo, mat);
-  m.rotation.x = -Math.PI/2;
-  m.position.y = y;
-  scene.add(m);
+function roundedShape(offset) {
+  const shape=new THREE.Shape(); const pts=outline(offset);
+  pts.forEach((p,i)=>i?shape.lineTo(p.x,-p.z):shape.moveTo(p.x,-p.z));shape.closePath();return shape;
 }
-flat(new THREE.RingGeometry(2.35, 2.52, 64), M.line);
-flat(new THREE.PlaneGeometry(FIELD_W, 0.12), M.line);
-for (const s of [-1, 1]) {
-  const m = new THREE.Mesh(
-    new THREE.PlaneGeometry(GOAL_W, GOAL_D),
-    new THREE.MeshBasicMaterial({ color: s < 0 ? 0x35d0ff : 0xff4d6d, transparent: true, opacity: 0.32 })
-  );
-  m.rotation.x = -Math.PI/2;
-  m.position.set(0, 0.021, s * (HL + GOAL_D/2));
-  scene.add(m);
+function slab(offset,depth,y,material) {
+  const mesh=new THREE.Mesh(new THREE.ExtrudeGeometry(roundedShape(offset),{depth,bevelEnabled:true,bevelSize:.12,bevelThickness:.12,bevelSegments:3,steps:1}),material);
+  mesh.rotation.x=-Math.PI/2;mesh.position.y=y;mesh.castShadow=mesh.receiveShadow=true;scene.add(mesh);return mesh;
 }
+slab(RAMP_W+.18,.48,-.76,M.wall);
+const floor=new THREE.Mesh(new THREE.ShapeGeometry(roundedShape(RAMP_W)),M.pitch);
+// Baked contact shading and fine pigment variation make the broad floor less flat.
+const pitchCanvas=document.createElement('canvas');pitchCanvas.width=pitchCanvas.height=512;
+const pitchCtx=pitchCanvas.getContext('2d'),pitchPixels=pitchCtx.createImageData(512,512);
+for(let y=0;y<512;y++)for(let x=0;x<512;x++){
+  const px=(x/511-.5)*2*(HW+RAMP_W),pz=(y/511-.5)*2*(HL+RAMP_W);
+  const qx=Math.abs(px)-(HW-CORNER_R),qz=Math.abs(pz)-(HL-CORNER_R);
+  const edge=Math.hypot(Math.max(qx,0),Math.max(qz,0))+Math.min(Math.max(qx,qz),0)-CORNER_R;
+  grainSeed=(grainSeed*1664525+1013904223)>>>0;
+  const contact=Math.exp(-Math.pow((edge+.05)/.38,2));
+  const v=clamp(248-contact*32+(grainSeed%13)-6,0,255),i=(y*512+x)*4;
+  pitchPixels.data.set([v,v,v,255],i);
+}
+pitchCtx.putImageData(pitchPixels,0,0);
+const pitchTexture=new THREE.CanvasTexture(pitchCanvas);pitchTexture.colorSpace=THREE.SRGBColorSpace;pitchTexture.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());M.pitch.map=pitchTexture;
+const floorPosition=floor.geometry.attributes.position,floorUV=floor.geometry.attributes.uv;
+for(let i=0;i<floorPosition.count;i++)floorUV.setXY(i,(floorPosition.getX(i)/(HW+RAMP_W)+1)/2,(floorPosition.getY(i)/(HL+RAMP_W)+1)/2);
+floor.rotation.x=-Math.PI/2;floor.receiveShadow=true;scene.add(floor);
+world.addBody(new CANNON.Body({mass:0,shape:new CANNON.Box(new CANNON.Vec3(HW+3,.5,HL+3)),position:new CANNON.Vec3(0,-.5,0),material:matGround}));
+const table=new THREE.Mesh(new THREE.PlaneGeometry(200,200),plastic(0xd5c5a6,.9));
+table.rotation.x=-Math.PI/2;table.position.y=-.75;table.receiveShadow=true;scene.add(table);
+function tube(points,r,material) {
+  const curve=new THREE.CatmullRomCurve3(points);
+  const mesh=new THREE.Mesh(new THREE.TubeGeometry(curve,Math.max(2,points.length*3),r,8,false),material);
+  mesh.castShadow=mesh.receiveShadow=true;scene.add(mesh);return mesh;
+}
+const inner=outline(), outer=outline(RAMP_W), rampVertices=[], rampIndices=[], rimParts=[];
+for(let i=0;i<inner.length;i++) {
+  const j=(i+1)%inner.length;
+  const isMouth=Math.abs(inner[i].z)===HL && inner[i].z===inner[j].z && Math.abs((inner[i].x+inner[j].x)/2)<GOAL_W/2;
+  if(isMouth) continue;
+  const start=rampVertices.length/3;
+  for(let k=0;k<=16;k++) {
+    const a=k/16*Math.PI/2, d=Math.sin(a), y=RAMP_H*(1-Math.cos(a));
+    for(const n of [i,j]) rampVertices.push(lerp(inner[n].x,outer[n].x,d),y,lerp(inner[n].z,outer[n].z,d));
+  }
+  for(let k=0;k<16;k++){const n=start+k*2;rampIndices.push(n,n+1,n+2,n+1,n+3,n+2);}
+  const rimPoints=[outer[i].clone(),outer[j].clone()];rimPoints.forEach(p=>p.y=RAMP_H);
+  // A tiny segment of the rim; each follows the same rounded perimeter as the ramp.
+  rimParts.push(tube(rimPoints,.18,M.rim));
+}
+// The outside of the molded tray closes the shell underneath the ramp lip.
+const shellPositions=[],shellIndices=[];
+for(let i=0;i<outer.length;i++) {
+  const j=(i+1)%outer.length,a=outer[i],b=outer[j];
+  if(Math.abs(inner[i].z)===HL && inner[i].z===inner[j].z && Math.abs((inner[i].x+inner[j].x)/2)<GOAL_W/2)continue;
+  const n=shellPositions.length/3;
+  shellPositions.push(a.x,-.16,a.z,b.x,-.16,b.z,a.x,RAMP_H,a.z,b.x,RAMP_H,b.z);
+  shellIndices.push(n,n+2,n+1,n+1,n+2,n+3);
+}
+const shellGeometry=new THREE.BufferGeometry();shellGeometry.setAttribute('position',new THREE.Float32BufferAttribute(shellPositions,3));shellGeometry.setIndex(shellIndices);shellGeometry.computeVertexNormals();
+const shell=new THREE.Mesh(shellGeometry,M.wall);shell.castShadow=shell.receiveShadow=true;scene.add(shell);
+// Batch the rim into one draw call, including its shadow pass.
+const rimPositions=[],rimNormals=[],rimUVs=[],rimIndices=[];
+for(const part of rimParts){
+  const g=part.geometry,offset=rimPositions.length/3;
+  rimPositions.push(...g.attributes.position.array);rimNormals.push(...g.attributes.normal.array);rimUVs.push(...g.attributes.uv.array);
+  for(const index of g.index.array)rimIndices.push(index+offset);
+  scene.remove(part);g.dispose();
+}
+const rimGeometry=new THREE.BufferGeometry();
+rimGeometry.setAttribute('position',new THREE.Float32BufferAttribute(rimPositions,3));
+rimGeometry.setAttribute('normal',new THREE.Float32BufferAttribute(rimNormals,3));
+rimGeometry.setAttribute('uv',new THREE.Float32BufferAttribute(rimUVs,2));rimGeometry.setIndex(rimIndices);
+const rim=new THREE.Mesh(rimGeometry,M.rim);rim.castShadow=rim.receiveShadow=true;scene.add(rim);
+const rampGeometry=new THREE.BufferGeometry();rampGeometry.setAttribute('position',new THREE.Float32BufferAttribute(rampVertices,3));rampGeometry.setIndex(rampIndices);rampGeometry.computeVertexNormals();
+const rampColors=[],rampUV=[];
+for(let i=0;i<rampVertices.length;i+=3){
+  const y=rampVertices[i+1],shade=.82+.18*Math.min(1,y/.45);
+  rampColors.push(shade,shade,shade);rampUV.push(rampVertices[i]/15,rampVertices[i+2]/21);
+}
+rampGeometry.setAttribute('color',new THREE.Float32BufferAttribute(rampColors,3));rampGeometry.setAttribute('uv',new THREE.Float32BufferAttribute(rampUV,2));
+const rampMaterial=M.wall.clone();rampMaterial.vertexColors=true;
+const ramp=new THREE.Mesh(rampGeometry,rampMaterial);ramp.receiveShadow=true;ramp.castShadow=true;scene.add(ramp);
+world.addBody(new CANNON.Body({mass:0,shape:new CANNON.Trimesh(rampVertices,rampIndices),material:matGround}));
+for(const side of [-1,1])tube([new THREE.Vector3(side*(HW+RAMP_W),RAMP_H,-.8),new THREE.Vector3(side*(HW+RAMP_W),RAMP_H,.8)],.22,M.goalA);
+// Goal floors remain flat: the ramp stops at each goal mouth.
+for(const side of [-1,1]) {
+  const z=side*HL, back=side*(HL+GOAL_D), h=WALL_H, w=GOAL_W/2;
+  const material=side<0?M.goalA:M.goalB;
+  tube([new THREE.Vector3(-w,0,z),new THREE.Vector3(-w,h-.15,z),new THREE.Vector3(-w+.15,h,z),new THREE.Vector3(w-.15,h,z),new THREE.Vector3(w,h-.15,z),new THREE.Vector3(w,0,z)],.105,material);
+  for(const x of [-w,w]) tube([new THREE.Vector3(x,0,z),new THREE.Vector3(x,.08,back),new THREE.Vector3(x,h*.78,back),new THREE.Vector3(x,h,z)],.065,M.rim);
+  tube([new THREE.Vector3(-w,h*.78,back),new THREE.Vector3(w,h*.78,back)],.065,M.rim);
+  const net=[]; const add=(a,b)=>net.push(...a,...b);
+  for(let x=-w;x<=w+.01;x+=.18){add([x,0,back],[x,h*.78,back]);add([x,h*.78,back],[x,h,z]);}
+  for(let y=.12;y<h*.78;y+=.18){add([-w,y,back],[w,y,back]);for(const x of [-w,w])add([x,y,z],[x,y,back]);}
+  for(let d=0;d<=GOAL_D;d+=.18){const zz=z+side*d;add([-w,h*(1-.22*d/GOAL_D),zz],[w,h*(1-.22*d/GOAL_D),zz]);for(const x of [-w,w])add([x,0,zz],[x,h*(1-.22*d/GOAL_D),zz]);}
+  const netMesh=new THREE.LineSegments(new THREE.BufferGeometry().setAttribute('position',new THREE.Float32BufferAttribute(net,3)),new THREE.LineBasicMaterial({color:0xfff9e5,transparent:true,opacity:.8}));scene.add(netMesh);
+  for(const x of [-w-.12,w+.12]) world.addBody(new CANNON.Body({mass:0,shape:new CANNON.Box(new CANNON.Vec3(.12,h/2,GOAL_D/2)),position:new CANNON.Vec3(x,h/2,side*(HL+GOAL_D/2)),material:matWall}));
+  world.addBody(new CANNON.Body({mass:0,shape:new CANNON.Box(new CANNON.Vec3(w,.1,.1)),position:new CANNON.Vec3(0,h,z),material:matWall}));
+  world.addBody(new CANNON.Body({mass:0,shape:new CANNON.Box(new CANNON.Vec3(w,h/2,.12)),position:new CANNON.Vec3(0,h/2,back),material:matWall}));
+}
+function flat(geo,mat,y=.015) {const m=new THREE.Mesh(geo,mat);m.rotation.x=-Math.PI/2;m.position.y=y;m.receiveShadow=true;scene.add(m);return m;}
+flat(new THREE.RingGeometry(2.05,2.12,96),M.line);
+flat(new THREE.CircleGeometry(.12,32),M.line);
+flat(new THREE.PlaneGeometry(FIELD_W,.075),M.line);
+for(const side of [-1,1]) {
+  const arc=flat(new THREE.RingGeometry(2.55,2.62,64,1,side<0?Math.PI:0,Math.PI),M.line);arc.position.z=side*HL;
+  const line=flat(new THREE.PlaneGeometry(GOAL_W,.07),M.line);line.position.z=side*HL;
+}
+// Soft contact shadows supplement the sun's real-time shadows.
+const shadowCanvas=document.createElement('canvas');shadowCanvas.width=shadowCanvas.height=64;
+const shadowCtx=shadowCanvas.getContext('2d'), gradient=shadowCtx.createRadialGradient(32,32,3,32,32,32);
+gradient.addColorStop(0,'rgba(40,32,20,.4)');gradient.addColorStop(.45,'rgba(40,32,20,.2)');gradient.addColorStop(1,'rgba(40,32,20,0)');shadowCtx.fillStyle=gradient;shadowCtx.fillRect(0,0,64,64);
+const contactTexture=new THREE.CanvasTexture(shadowCanvas);
 
 function makeBall(color, emissive, x, z, radius = BALL_R, material = matBall) {
   const body = new CANNON.Body({
@@ -461,21 +568,22 @@ function makeBall(color, emissive, x, z, radius = BALL_R, material = matBall) {
   const group = new THREE.Group();
   const sphere = new THREE.Mesh(
     new THREE.SphereGeometry(radius, 32, 24),
-    new THREE.MeshStandardMaterial({ color, emissive, emissiveIntensity: 0.55, roughness: 0.32 })
+    plastic(color,.24)
   );
-  sphere.castShadow = true;
+  sphere.castShadow = sphere.receiveShadow = true;
   group.add(sphere);
   const band = new THREE.Mesh(
     new THREE.TorusGeometry(radius * 1.004, 0.04, 8, 48),
-    new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.35 })
+    plastic(0xfff9e8,.32)
   );
   band.rotation.y = Math.PI/2;
   group.add(band);
   scene.add(group);
-  return { body, group, radius };
+  const contact=flat(new THREE.PlaneGeometry(radius*3.8,radius*3.8),new THREE.MeshBasicMaterial({map:contactTexture,transparent:true,depthWrite:false}),.025);
+  return { body, group, radius, contact };
 }
-const ballA = makeBall(0x35d0ff, 0x0a6a92, 0, -5);
-const ballB = makeBall(0xff4d6d, 0x8a0f28, 0,  5);
+const ballA = makeBall(0x287cc7, 0x0a6a92, 0, -5);
+const ballB = makeBall(0xf38b32, 0x8a0f28, 0,  5);
 const football = makeBall(0xffffff, 0x303b4b, 0, 0, FOOTBALL_R, matFootball);
 football.group.children[1].material.color.set(0x142237);
 football.group.children[1].material.emissive.set(0x000000);
@@ -692,7 +800,7 @@ function resetMatch() {
 }
 function checkGoal() {
     const p = football.body.position;
-    if (Math.abs(p.x) > GOAL_W / 2 - FOOTBALL_R || p.y > WALL_H + FOOTBALL_R) return;
+    if (Math.abs(p.x) > GOAL_W / 2 - FOOTBALL_R || p.y > WALL_H - FOOTBALL_R) return;
     if (training && training.mode !== 'free') {
       if (Math.abs(p.z) > HL + FOOTBALL_R) trainingGoal(p);
       return;
@@ -712,9 +820,9 @@ function checkGoal() {
 /* Chute e afinação: toda a física é decidida pelo host (ou pelo treino local). */
 const kicks = [0,1].map(() => ({energy:100,cooldown:0,held:false,charge:0,burst:0,startAt:0,rest:0}));
 let localKickHeld = false, kickSequence = 0, remoteKickSequence = -1, kickPointer = null;
-const kickPad = document.getElementById('kickPad');
+let localBurst=0;
 function resetKicks() {
-  localKickHeld = false; kickPointer=null;
+  localKickHeld = false; kickPointer=null; localBurst=0;
   for (const k of kicks) Object.assign(k,{energy:100,cooldown:0,held:false,charge:0,burst:0,rest:0});
   for (const player of [ballA,ballB]) inflatePlayer(player,1);
 }
@@ -750,17 +858,19 @@ function kickEvent(index,action) {
   if (!gameRunning || resetTimer>0 || kickoffTimer>0 || (!training && !peerConnected)) return;
   if (action==='down') {
     if (k.held || k.cooldown>0 || k.energy<6) return;
-    k.held=true; k.startAt=performance.now(); k.charge=0; k.burst=.15; k.rest=.7;
+    k.held=true; k.startAt=performance.now(); k.charge=0; k.burst=0; k.rest=.7;
     k.energy=Math.max(0,k.energy-6);
-    inflatePlayer(index===0?ballA:ballB,1.14);
+
   } else if (action==='up' && k.held) {
     const charge=clamp((performance.now()-k.startAt)/1000/settings.chargeTime,0,1);
     k.held=false; k.charge=0;
     const power=charge>.12?charge:0;
     const cost=(settings.fatigue-6)*power;
     const available=Math.min(1,k.energy/Math.max(cost,1));
+    k.burst=.18+.24*power;
+    inflatePlayer(index===0?ballA:ballB,1+k.burst);
     kickImpulse(index,(.18+.82*power)*(.35+.65*k.energy/100)*available);
-    k.energy=Math.max(0,k.energy-cost); k.burst=.15+.13*power;
+    k.energy=Math.max(0,k.energy-cost);
     k.cooldown=settings.cooldown*(1+.6*charge); k.rest=.8;
   }
 }
@@ -777,24 +887,22 @@ function beginLocalKick() {
 }
 function endLocalKick(cancel=false) {
   if (!localKickHeld) return;
-  localKickHeld=false; sendKick(cancel?'cancel':'up');
+  localKickHeld=false;
+  if(!isHost && !cancel) localBurst=.18+.24*kicks[1].charge;
+  sendKick(cancel?'cancel':'up');
 }
 function updateKicks(dt) {
+  localBurst=Math.max(0,localBurst-dt*2);
+  if (!isHost) for(const k of kicks) k.burst=Math.max(0,k.burst-dt*2);
   if (isHost) for (const k of kicks) {
-    k.cooldown=Math.max(0,k.cooldown-dt); k.burst=Math.max(0,k.burst-dt); k.rest=Math.max(0,k.rest-dt);
+    k.cooldown=Math.max(0,k.cooldown-dt); k.burst=Math.max(0,k.burst-dt*2); k.rest=Math.max(0,k.rest-dt);
     if(k.held) k.charge=clamp((performance.now()-k.startAt)/1000/settings.chargeTime,0,1);
     else if(k.rest===0) k.energy=Math.min(100,k.energy+settings.recovery*dt);
   }
   [ballA,ballB].forEach((player,i)=>{
-    const k=kicks[i]; inflatePlayer(player,1+(k.held ? .14+.26*k.charge : 0)+k.burst*.7);
+    const k=kicks[i]; inflatePlayer(player,1+Math.max(k.burst,i===1&&!isHost?localBurst:0));
   });
-  const k=kicks[isHost?0:1];
-  kickPad.classList.toggle('charging',k.held || localKickHeld);
-  kickPad.disabled=!gameRunning || (!localKickHeld && (!canPlay() || k.cooldown>0 || k.energy<6));
-  kickPad.textContent=k.held?'LARGA!':k.cooldown>0?'A RECUPERAR':'CHUTAR';
-  document.getElementById('chargeFill').style.width=(k.charge*100)+'%';
-  document.getElementById('energyFill').style.width=k.energy+'%';
-  document.getElementById('kickHint').textContent=`Energia ${Math.round(k.energy)}% · ${k.cooldown>0?k.cooldown.toFixed(1)+' s':'toca ou mantém e larga'}`;
+
 }
 function applySettings() {
   for(const player of [ballA,ballB]) { player.body.mass=settings.playerMass; player.body.updateMassProperties(); }
@@ -846,7 +954,7 @@ function drawTraining() {
 function prepareTrainingAttempt() {
   resetTimer=0; resetPositions();
   if(training.mode==='aim') {
-    training.targetX=[-1.5,0,1.5,0,-1.5][training.hits%5];
+    training.targetX=[-.85,0,.85,0,-.85][training.hits%5];
     football.body.position.set(0,FOOTBALL_R,2);
     ballA.body.position.set(0,BALL_R,.4);
   } else if(training.mode==='dribble') football.body.position.set(0,FOOTBALL_R,-3.6);
@@ -1249,7 +1357,6 @@ function cleanupRoom() {
   ballB.group.visible=true;ballB.body.collisionFilterMask=-1;
   if(!world.bodies.includes(ballB.body))world.addBody(ballB.body);
   document.getElementById('trainingInfo').style.display='none';
-  document.getElementById('kickBox').hidden=true;
   document.getElementById('settingsPanel').hidden=true;
   settings={...personalSettings};applySettings();remoteSettingsRevision=-1;
   resetKicks(); guestPhase='ready';
@@ -1447,7 +1554,6 @@ function joinRoomWithCode(code) {
 
 function startGame() {
   gameRunning = true;
-  document.getElementById('kickBox').hidden=false;
   document.getElementById('overlay').classList.add('hidden');
   setStatus('jogo a correr', 'ok');
   netlog('jogo iniciado', 'ok');
@@ -1712,6 +1818,14 @@ function tick(now) {
       `vel A      : ${ballA.body.velocity.length().toFixed(1)}`;
   }
 
+  for(const [,ball] of actors) {
+    const p=ball.group.position, shadow=ball.contact;
+    shadow.visible=ball.group.visible;
+    shadow.position.set(p.x,.025,p.z);
+    const height=Math.max(0,p.y-ball.radius);
+    shadow.material.opacity=clamp(1-height*.6,0,1);
+    shadow.scale.setScalar(ball.group.scale.x*(1+height*.25));
+  }
   renderer.render(scene, camera);
 }
 requestAnimationFrame(tick);
@@ -1731,17 +1845,17 @@ document.getElementById('btnDbg').addEventListener('click', (e) => {
   e.currentTarget.style.opacity = debugOn ? '1' : '0.65';
 });
 
-kickPad.addEventListener('pointerdown',e=>{
+renderer.domElement.addEventListener('pointerdown',e=>{
   if(e.button!==0 || kickPointer!==null || localKickHeld) return;
   e.preventDefault();beginLocalKick();
-  if(localKickHeld){kickPointer=e.pointerId;kickPad.setPointerCapture(e.pointerId);}
+  if(localKickHeld){kickPointer=e.pointerId;renderer.domElement.setPointerCapture(e.pointerId);}
 });
-kickPad.addEventListener('pointerup',e=>{if(e.pointerId===kickPointer){kickPointer=null;endLocalKick();}});
-kickPad.addEventListener('pointercancel',e=>{if(e.pointerId===kickPointer){kickPointer=null;endLocalKick(true);}});
-kickPad.addEventListener('lostpointercapture',e=>{if(e.pointerId===kickPointer){kickPointer=null;endLocalKick(true);}});
-kickPad.addEventListener('contextmenu',e=>e.preventDefault());
-kickPad.addEventListener('keydown',e=>{if(e.code==='Space'&&!e.repeat){e.preventDefault();beginLocalKick();}});
-kickPad.addEventListener('keyup',e=>{if(e.code==='Space'){e.preventDefault();endLocalKick();}});
+renderer.domElement.addEventListener('pointerup',e=>{if(e.pointerId===kickPointer){kickPointer=null;endLocalKick();}});
+renderer.domElement.addEventListener('pointercancel',e=>{if(e.pointerId===kickPointer){kickPointer=null;endLocalKick(true);}});
+renderer.domElement.addEventListener('lostpointercapture',e=>{if(e.pointerId===kickPointer){kickPointer=null;endLocalKick(true);}});
+renderer.domElement.addEventListener('contextmenu',e=>e.preventDefault());
+window.addEventListener('keydown',e=>{if(e.code==='Space'&&!e.repeat && e.target===document.body){e.preventDefault();beginLocalKick();}});
+window.addEventListener('keyup',e=>{if(e.code==='Space'){e.preventDefault();endLocalKick();}});
 window.addEventListener('blur',()=>endLocalKick(true));
 document.addEventListener('visibilitychange',()=>{if(document.hidden)endLocalKick(true);});
 document.getElementById('btnSettings').onclick=openSettings;
