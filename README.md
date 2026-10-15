@@ -1,6 +1,6 @@
 # GiroBall ⚽
 
-<img width="945" height="1707" alt="GiroBall" src="https://github.com/user-attachments/assets/686cfb3a-62a8-41fd-a5d2-415cff08b3b7" />
+<img width="400" height="723" alt="GiroBall" src="https://github.com/user-attachments/assets/bbc9b91f-0bb0-40a0-80fa-e1c7ffe6a371" />
 
 
 ## How it works
