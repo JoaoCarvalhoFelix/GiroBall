@@ -1,5 +1,8 @@
 # GiroBall ⚽
 
+<img width="945" height="1707" alt="GiroBall" src="https://github.com/user-attachments/assets/686cfb3a-62a8-41fd-a5d2-415cff08b3b7" />
+
+
 ## How it works
 
 GiroBall is a two-player browser game built as a single HTML file. **Three.js** renders the 3D field, **cannon-es** simulates the balls, and **Trystero** uses Nostr relays to help the browsers find each other before establishing a **WebRTC** connection. The room creator runs the match physics and goal detection; the guest sends controls and receives the game state.
